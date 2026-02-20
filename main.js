@@ -5,7 +5,7 @@ import {
 } from './audio.js';
 import { setupKnob, updatePadUI, resetFXUI } from './ui.js';
 
-// --- Globaler App-Status (Synchronisiert mit Pigeon-3) ---
+// --- State Management ---
 let patternBanks = { A: [null, null, null, null], B: [null, null, null, null], C: [null, null, null, null] };
 let isPlaying = false;
 let isSaveMode = false;
@@ -19,7 +19,6 @@ let liveFilterNode = null;
 let activeNodes = [];
 let lastAvg = 0;
 
-// Performance & Trace-Pad Status
 let currentTargetTrack = 0;
 let traceCurrentY = 50;
 let isTracing = false;
@@ -52,15 +51,7 @@ const tracks = Array.from(document.querySelectorAll(".track-container")).map((c,
     gainNode: null
 }));
 
-// --- Hilfsfunktionen ---
-function getPos(e, c) {
-    const r = c.getBoundingClientRect();
-    const cx = e.touches ? e.touches[0].clientX : e.clientX;
-    const cy = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: (cx - r.left) * (c.width / r.width), y: (cy - r.top) * (c.height / r.height) };
-}
-
-// --- Initialisierung ---
+// --- Boot ---
 document.addEventListener("DOMContentLoaded", () => {
     tracks.forEach(t => {
         drawGrid(t);
@@ -72,6 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMainControls();
     setupPads();
     setupTracePad();
+    // Initialer Reset: Effekte aus, Sends auf 0
     resetFXUI(updateRoutingFromUI);
 });
 
@@ -86,12 +78,9 @@ function loadInitialData() {
         }
     }
     fetch('default_set.json').then(res => res.json()).then(data => {
-        if (data.banks) {
-            patternBanks = data.banks;
-            updatePadUI(patternBanks);
-        }
+        if (data.banks) { patternBanks = data.banks; updatePadUI(patternBanks); }
         if (data.current) loadPatternData(data.current);
-    }).catch(e => console.log("Default-Set nicht gefunden."));
+    }).catch(e => console.log("Kein Default-Set gefunden."));
 }
 
 function loadPatternData(d) {
@@ -124,51 +113,7 @@ function loadPatternData(d) {
     }
 }
 
-function setupDrawing(track) {
-    let drawing = false;
-    const start = e => {
-        e.preventDefault();
-        initAudio(tracks, updateRoutingFromUI);
-        const pos = getPos(e, track.canvas);
-        const x = track.snap ? Math.round(pos.x / (track.canvas.width / 32)) * (track.canvas.width / 32) : pos.x;
-        if (toolSelect.value === "draw") {
-            drawing = true;
-            let jX = 0, jY = 0;
-            if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
-            traceCurrentSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
-            track.segments.push(traceCurrentSeg);
-            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y);
-            else startLiveSynth(track, pos.y);
-        } else erase(track, x, pos.y);
-    };
-    const move = e => {
-        if (!drawing && toolSelect.value !== "erase") return;
-        e.preventDefault();
-        const pos = getPos(e, track.canvas);
-        const x = track.snap ? Math.round(pos.x / (track.canvas.width / 32)) * (track.canvas.width / 32) : pos.x;
-        if (drawing) {
-            let jX = 0, jY = 0;
-            if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
-            traceCurrentSeg.points.push({ x, y: pos.y, jX, jY });
-            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value !== "particles") updateLiveSynth(track, pos.y + jY);
-        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) erase(track, x, pos.y);
-    };
-    const stop = () => { if (drawing) { drawing = false; undoStack.push({ trackIdx: track.index, segment: traceCurrentSeg }); stopLiveSynth(); redrawTrack(track); } };
-    track.canvas.addEventListener("mousedown", start);
-    track.canvas.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
-    track.canvas.addEventListener("touchstart", start, { passive: false });
-    track.canvas.addEventListener("touchmove", move, { passive: false });
-    track.canvas.addEventListener("touchend", stop);
-}
-
-function erase(t, x, y) {
-    t.segments = t.segments.filter(s => !s.points.some(p => Math.hypot(p.x - x, p.y - y) < 20));
-    redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors);
-}
-
+// --- Audio Logic ---
 function startLiveSynth(track, y) {
     if (track.mute || track.vol < 0.01) return;
     liveNodes = [];
@@ -212,9 +157,14 @@ function updateLiveSynth(track, y) {
 
 function stopLiveSynth() {
     if (!liveGainNode) return;
-    const gn = liveGainNode, ns = liveNodes;
+    const gn = liveGainNode; const ns = liveNodes;
     gn.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
-    setTimeout(() => { ns.forEach(n => { try { n.stop(); } catch (e) { } }); if (gn.out) gn.out.disconnect(); if (liveFilterNode) liveFilterNode.disconnect(); gn.disconnect(); }, 100);
+    setTimeout(() => { 
+        ns.forEach(n => { try { n.stop(); } catch (e) { } }); 
+        if (gn.out) gn.out.disconnect(); 
+        if (liveFilterNode) liveFilterNode.disconnect(); 
+        gn.disconnect(); 
+    }, 100);
     liveNodes = []; liveGainNode = null; liveFilterNode = null;
 }
 
@@ -242,108 +192,89 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain) {
         const trkG = targetCtx.createGain();
         trkG.connect(targetDest);
         trkG.gain.value = track.mute ? 0 : track.vol;
-        if (targetCtx === audioCtx) track.gainNode = trkG;
+        if (targetCtx === audioCtx) { track.gainNode = trkG; connectTrackToFX(trkG, track.index); }
         
         track.segments.forEach(seg => {
             const brush = seg.brush || "standard";
-            const currentWave = track.wave;
-            
+            const sorted = seg.points.slice().sort((a, b) => a.x - b.x);
+            if (sorted.length < 2 && brush !== "particles") return;
+            let sT = Math.max(0, start + (sorted[0]?.x / 750) * playbackDuration);
+            let eT = Math.max(0, start + (sorted[sorted.length-1]?.x / 750) * playbackDuration);
+
             if (brush === "particles") {
                 seg.points.forEach(p => {
-                    const t = Math.max(0, start + (p.x / track.canvas.width) * playbackDuration);
-                    const osc = targetCtx.createOscillator();
-                    osc.type = currentWave;
-                    let f = mapYToFrequency(p.y, 100);
-                    if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
+                    const t = Math.max(0, start + (p.x / 750) * playbackDuration);
+                    const osc = targetCtx.createOscillator(); osc.type = track.wave;
+                    let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
                     osc.frequency.value = f;
-                    const env = targetCtx.createGain();
-                    env.gain.setValueAtTime(0, t);
-                    env.gain.linearRampToValueAtTime(0.4, t + 0.01);
-                    env.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
-                    osc.connect(env).connect(trkG);
-                    osc.start(t); osc.stop(t + 0.2);
-                    if (targetCtx === audioCtx) activeNodes.push(osc);
-                });
-                return;
-            }
-
-            const sorted = seg.points.slice().sort((a, b) => a.x - b.x);
-            if (sorted.length < 2) return;
-            let sT = Math.max(0, start + (sorted[0].x / track.canvas.width) * playbackDuration);
-            let eT = Math.max(0, start + (sorted[sorted.length - 1].x / track.canvas.width) * playbackDuration);
-
-            if (brush === "chord") {
-                const intervals = chordIntervals[seg.chordType || "major"];
-                intervals.forEach(iv => {
-                    const osc = targetCtx.createOscillator();
-                    osc.type = currentWave;
-                    const g = targetCtx.createGain();
-                    g.gain.setValueAtTime(0, sT);
-                    g.gain.linearRampToValueAtTime(0.2, sT + 0.005);
-                    g.gain.setValueAtTime(0.2, eT);
-                    g.gain.linearRampToValueAtTime(0, eT + 0.05);
-                    osc.connect(g).connect(trkG);
-                    sorted.forEach(p => {
-                        const t = Math.max(0, start + (p.x / track.canvas.width) * playbackDuration);
-                        let f = mapYToFrequency(p.y, 100);
-                        if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
-                        osc.frequency.linearRampToValueAtTime(f * Math.pow(2, iv / 12), t);
-                    });
-                    osc.start(sT); osc.stop(eT + 0.1);
+                    const env = targetCtx.createGain(); env.gain.setValueAtTime(0, t);
+                    env.gain.linearRampToValueAtTime(0.4, t + 0.01); env.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+                    osc.connect(env).connect(trkG); osc.start(t); osc.stop(t + 0.2);
                     if (targetCtx === audioCtx) activeNodes.push(osc);
                 });
             } else {
-                const osc = targetCtx.createOscillator();
-                osc.type = currentWave;
-                const g = targetCtx.createGain();
-                g.gain.setValueAtTime(0, sT);
-                g.gain.linearRampToValueAtTime(0.3, sT + 0.02);
-                g.gain.setValueAtTime(0.3, eT);
-                g.gain.linearRampToValueAtTime(0, eT + 0.1);
-                
-                if (brush === "fractal") {
-                    const sh = targetCtx.createWaveShaper();
-                    sh.curve = getDistortionCurve();
-                    osc.connect(sh).connect(g);
-                } else {
-                    osc.connect(g);
-                }
-                g.connect(trkG);
-                sorted.forEach(p => {
-                    const t = Math.max(0, start + (p.x / track.canvas.width) * playbackDuration);
-                    let f = mapYToFrequency(p.y, 100);
-                    if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
-                    osc.frequency.linearRampToValueAtTime(f, t);
+                const intervals = (brush === "chord") ? chordIntervals[seg.chordType || "major"] : [0];
+                intervals.forEach(iv => {
+                    const osc = targetCtx.createOscillator(); osc.type = track.wave;
+                    const g = targetCtx.createGain(); g.gain.setValueAtTime(0, sT);
+                    g.gain.linearRampToValueAtTime(brush === "chord" ? 0.2 : 0.3, sT + 0.02);
+                    g.gain.setValueAtTime(brush === "chord" ? 0.2 : 0.3, eT);
+                    g.gain.linearRampToValueAtTime(0, eT + 0.1);
+                    if (brush === "fractal") { const sh = targetCtx.createWaveShaper(); sh.curve = getDistortionCurve(); osc.connect(sh).connect(g); }
+                    else { osc.connect(g); }
+                    g.connect(trkG);
+                    sorted.forEach(p => {
+                        const t = Math.max(0, start + (p.x / 750) * playbackDuration);
+                        let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
+                        osc.frequency.linearRampToValueAtTime(f * Math.pow(2, iv/12), t);
+                    });
+                    osc.start(sT); osc.stop(eT + 0.2);
+                    if (targetCtx === audioCtx) activeNodes.push(osc);
                 });
-                osc.start(sT); osc.stop(eT + 0.2);
-                if (targetCtx === audioCtx) activeNodes.push(osc);
             }
         });
     });
 }
 
-function audioBufferToWav(buffer) {
-    let n = buffer.numberOfChannels, len = buffer.length * n * 2 + 44, arr = new ArrayBuffer(len), view = new DataView(arr);
-    const s32 = (v, o) => view.setUint32(o, v, true);
-    s32(0x46464952, 0); s32(len - 8, 4); s32(0x45564157, 8); s32(0x20746d66, 12); s32(16, 16); 
-    view.setUint16(20, 1, true); view.setUint16(22, n, true); s32(buffer.sampleRate, 24); 
-    s32(buffer.sampleRate * n * 2, 28); view.setUint16(32, n * 2, true); view.setUint16(34, 16, true); 
-    s32(0x61746164, 36); s32(len - 44, 40);
-    let offset = 44; 
-    for (let i = 0; i < buffer.length; i++) {
-        for (let c = 0; c < n; c++) {
-            let s = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]));
-            view.setInt16(offset, (s < 0 ? s * 32768 : s * 32767), true); offset += 2;
-        }
-    }
-    return new Blob([arr], { type: "audio/wav" });
+// --- Interaction ---
+function setupDrawing(track) {
+    let drawing = false;
+    const start = e => {
+        e.preventDefault();
+        initAudio(tracks, updateRoutingFromUI);
+        const pos = getPos(e, track.canvas);
+        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
+        if (toolSelect.value === "draw") {
+            drawing = true;
+            traceCurrentSeg = { points: [{ x, y: pos.y }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
+            track.segments.push(traceCurrentSeg);
+            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
+        } else erase(track, x, pos.y);
+    };
+    const move = e => {
+        if (!drawing && toolSelect.value !== "erase") return;
+        const pos = getPos(e, track.canvas);
+        if (drawing) {
+            traceCurrentSeg.points.push({ x: pos.x, y: pos.y });
+            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
+            if (brushSelect.value !== "particles") updateLiveSynth(track, pos.y);
+        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) erase(track, pos.x, pos.y);
+    };
+    const stop = () => { if (drawing) { drawing = false; undoStack.push({ trackIdx: track.index }); stopLiveSynth(); redrawTrack(track); } };
+    track.canvas.addEventListener("mousedown", start); track.canvas.addEventListener("mousemove", move); window.addEventListener("mouseup", stop);
+    track.canvas.addEventListener("touchstart", start, { passive: false }); track.canvas.addEventListener("touchmove", move, { passive: false }); track.canvas.addEventListener("touchend", stop);
 }
 
+function erase(t, x, y) {
+    t.segments = t.segments.filter(s => !s.points.some(p => Math.hypot(p.x - x, p.y - y) < 20));
+    redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors);
+}
+
+// --- UI Controls ---
 function setupMainControls() {
     document.getElementById("playButton").addEventListener("click", () => {
         if (isPlaying) return;
         initAudio(tracks, updateRoutingFromUI);
-        if (audioCtx.state === "suspended") audioCtx.resume();
         playbackDuration = (60 / (parseFloat(document.getElementById("bpmInput").value) || 120)) * 32;
         playbackStartTime = audioCtx.currentTime + 0.1;
         isPlaying = true;
@@ -358,17 +289,23 @@ function setupMainControls() {
         activeNodes = [];
         tracks.forEach(t => { if(t.gainNode) t.gainNode.disconnect(); redrawTrack(t); });
         pigeonImg.style.transform = "scale(1)";
+        document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued"));
     });
 
-    document.getElementById("clearButton").addEventListener("click", () => { tracks.forEach(t => { t.segments = []; redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); }); });
-    
+    document.getElementById("fullscreenBtn")?.addEventListener("click", () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+    });
+
     document.getElementById("undoButton").addEventListener("click", () => {
         if (undoStack.length) {
-            const o = undoStack.pop();
-            tracks[o.trackIdx].segments.pop();
-            redrawTrack(tracks[o.trackIdx], undefined, brushSelect.value, chordIntervals, chordColors);
+            const last = undoStack.pop();
+            tracks[last.trackIdx].segments.pop();
+            redrawTrack(tracks[last.trackIdx], undefined, brushSelect.value, chordIntervals, chordColors);
         }
     });
+
+    document.getElementById("clearButton").addEventListener("click", () => { tracks.forEach(t => { t.segments = []; drawGrid(t); }); });
 
     document.getElementById("exportWavButton").addEventListener("click", () => {
         const btn = document.getElementById("exportWavButton");
@@ -377,14 +314,11 @@ function setupMainControls() {
             const bpm = parseFloat(document.getElementById("bpmInput").value) || 120;
             const dur = (60 / bpm) * 32;
             const offCtx = new OfflineAudioContext(2, 44100 * dur, 44100);
-            const offMaster = offCtx.createGain();
-            offMaster.gain.value = 0.5;
-            offMaster.connect(offCtx.destination);
+            const offMaster = offCtx.createGain(); offMaster.gain.value = 0.5; offMaster.connect(offCtx.destination);
             scheduleTracks(0, offCtx, offMaster);
             offCtx.startRendering().then(buf => {
                 const wav = audioBufferToWav(buf);
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(wav); a.download = "pigeon_loop.wav"; a.click();
+                const a = document.createElement("a"); a.href = URL.createObjectURL(wav); a.download = "pigeon_loop.wav"; a.click();
                 btn.innerText = "Export WAV";
             });
         }, 50);
@@ -399,7 +333,11 @@ function setupMainControls() {
     document.getElementById("importButton").addEventListener("click", () => document.getElementById("importFileInput").click());
     document.getElementById("importFileInput").addEventListener("change", e => {
         const r = new FileReader();
-        r.onload = evt => { const d = JSON.parse(evt.target.result); if (d.banks) patternBanks = d.banks; loadPatternData(d.current || d); updatePadUI(patternBanks); };
+        r.onload = evt => { 
+            const d = JSON.parse(evt.target.result); 
+            if (d.banks) { patternBanks = d.banks; updatePadUI(patternBanks); } 
+            loadPatternData(d.current || d); 
+        };
         r.readAsText(e.target.files[0]);
     });
 }
@@ -410,11 +348,12 @@ function setupPads() {
         pad.addEventListener("click", () => {
             const b = pad.dataset.bank, i = parseInt(pad.dataset.idx);
             if (isSaveMode) {
-                patternBanks[b][i] = { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) };
+                patternBanks[b][i] = { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave })) };
                 localStorage.setItem("pigeonBanks", JSON.stringify(patternBanks)); isSaveMode = false; document.getElementById("saveModeBtn").classList.remove("active"); updatePadUI(patternBanks);
-            } else if (patternBanks[b][i]) {
-                if (isPlaying) queuedPattern = { data: patternBanks[b][i], pad: pad };
-                else loadPatternData(patternBanks[b][i]);
+                document.querySelectorAll(".pad").forEach(p => p.classList.remove("active")); pad.classList.add("active");
+            } else if (patternBanks[b] && patternBanks[b][i]) {
+                if (isPlaying) { queuedPattern = { data: patternBanks[b][i], pad: pad }; document.querySelectorAll(".pad").forEach(p => p.classList.remove("queued")); pad.classList.add("queued"); }
+                else { loadPatternData(patternBanks[b][i]); document.querySelectorAll(".pad").forEach(p => p.classList.remove("active")); pad.classList.add("active"); }
             }
         });
     });
@@ -422,7 +361,12 @@ function setupPads() {
 
 function setupTracePad() {
     if (!tracePad) return;
-    const getPadPos = (e) => { const r = tracePad.getBoundingClientRect(); const cx = e.touches ? e.touches[0].clientX : e.clientX; const cy = e.touches ? e.touches[0].clientY : e.clientY; return { x: (cx - r.left) * (750 / r.width), y: (cy - r.top) * (100 / r.height) }; };
+    const getPadPos = (e) => { 
+        const r = tracePad.getBoundingClientRect(); 
+        const cx = e.touches ? e.touches[0].clientX : e.clientX;
+        const cy = e.touches ? e.touches[0].clientY : e.clientY;
+        return { x: (cx - r.left) * (750 / r.width), y: (cy - r.top) * (100 / r.height) }; 
+    };
     tracePad.addEventListener("mousedown", e => {
         e.preventDefault(); if (!isPlaying) return; initAudio(tracks, updateRoutingFromUI); isTracing = true;
         const pos = getPadPos(e); traceCurrentY = pos.y; isEffectMode = document.querySelectorAll('.fx-xy-link.active').length > 0;
@@ -432,7 +376,7 @@ function setupTracePad() {
             tracks[currentTargetTrack].segments.push(traceCurrentSeg); startLiveSynth(tracks[currentTargetTrack], traceCurrentY);
         }
     });
-    tracePad.addEventListener("mousemove", e => { if (!isTracing || !isPlaying) return; const pos = getPadPos(e); traceCurrentY = pos.y; if (!isEffectMode) updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); });
+    tracePad.addEventListener("mousemove", e => { if (isTracing) { const pos = getPadPos(e); traceCurrentY = pos.y; if (!isEffectMode) updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); } });
     window.addEventListener("mouseup", () => { if (isTracing) { if (!isEffectMode) stopLiveSynth(); isTracing = false; redrawTrack(tracks[currentTargetTrack]); } });
     document.querySelectorAll(".picker-btn").forEach(btn => btn.addEventListener("click", () => { document.querySelectorAll(".picker-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); currentTargetTrack = parseInt(btn.dataset.target); }));
     document.getElementById("traceClearBtn").addEventListener("click", () => { tracks[currentTargetTrack].segments = []; redrawTrack(tracks[currentTargetTrack], undefined, brushSelect.value, chordIntervals, chordColors); });
@@ -481,26 +425,21 @@ function loop() {
     if (!isPlaying) return;
     let elapsed = audioCtx.currentTime - playbackStartTime;
     if (elapsed >= playbackDuration) {
-        if (queuedPattern) { loadPatternData(queuedPattern.data); queuedPattern = null; }
-        if (document.getElementById("loopCheckbox").checked) {
-            playbackStartTime = audioCtx.currentTime; scheduleTracks(playbackStartTime); elapsed = 0;
-            if (isTracing && traceCurrentSeg) {
-                undoStack.push({ trackIdx: currentTargetTrack, segment: traceCurrentSeg });
-                traceCurrentSeg = { points: [], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
-                tracks[currentTargetTrack].segments.push(traceCurrentSeg);
-            }
-        } else { isPlaying = false; return; }
+        if (queuedPattern) { 
+            loadPatternData(queuedPattern.data); 
+            document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued"));
+            queuedPattern.pad.classList.add("active"); queuedPattern = null; 
+        }
+        if (document.getElementById("loopCheckbox").checked) { playbackStartTime = audioCtx.currentTime; scheduleTracks(playbackStartTime); elapsed = 0; }
+        else { isPlaying = false; return; }
     }
     const x = (elapsed / playbackDuration) * 750;
-    if (isTracing && traceCurrentSeg) {
-        let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
-        traceCurrentSeg.points.push({ x, y: traceCurrentY, jX, jY });
-    }
+    if (isTracing && traceCurrentSeg) { traceCurrentSeg.points.push({ x, y: traceCurrentY }); }
     if (isTracing && isEffectMode) {
         const normX = x / 750, normY = 1.0 - (traceCurrentY / 100);
         document.querySelectorAll('.fx-xy-link.active').forEach(l => {
             const t = l.closest('.fx-unit').querySelector('.fx-header').innerText;
-            if (t.includes("DELAY")) { fxNodes.delay.node.delayTime.setTargetAtTime(normX * 1.0, audioCtx.currentTime, 0.05); fxNodes.delay.feedback.gain.setTargetAtTime(normY * 0.9, audioCtx.currentTime, 0.05); }
+            if (t.includes("DELAY")) { fxNodes.delay.node.delayTime.setTargetAtTime(normX, audioCtx.currentTime, 0.05); fxNodes.delay.feedback.gain.setTargetAtTime(normY * 0.9, audioCtx.currentTime, 0.05); }
             else if (t.includes("VIBRATO")) { fxNodes.vibrato.lfo.frequency.setTargetAtTime(normX * 20, audioCtx.currentTime, 0.05); fxNodes.vibrato.depthNode.gain.setTargetAtTime(normY * 0.01, audioCtx.currentTime, 0.05); }
             else if (t.includes("REVERB")) { fxNodes.reverb.mix.gain.setTargetAtTime(normY * 1.5, audioCtx.currentTime, 0.05); }
         });
@@ -511,4 +450,21 @@ function loop() {
     let d = avg - lastAvg; lastAvg = avg;
     pigeonImg.style.transform = `scale(${1 + Math.min(0.2, d / 100)}, ${1 - Math.min(0.5, d / 50)})`;
     animationFrameId = requestAnimationFrame(loop);
+}
+
+function audioBufferToWav(buffer) {
+    let n = buffer.numberOfChannels, len = buffer.length * n * 2 + 44, arr = new ArrayBuffer(len), view = new DataView(arr);
+    const s32 = (v, o) => view.setUint32(o, v, true);
+    s32(0x46464952, 0); s32(len - 8, 4); s32(0x45564157, 8); s32(0x20746d66, 12); s32(16, 16); 
+    view.setUint16(20, 1, true); view.setUint16(22, n, true); s32(buffer.sampleRate, 24); 
+    s32(buffer.sampleRate * n * 2, 28); view.setUint16(32, n * 2, true); view.setUint16(34, 16, true); 
+    s32(0x61746164, 36); s32(len - 44, 40);
+    let offset = 44; 
+    for (let i = 0; i < buffer.length; i++) {
+        for (let c = 0; c < n; c++) {
+            let s = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]));
+            view.setInt16(offset, (s < 0 ? s * 32768 : s * 32767), true); offset += 2;
+        }
+    }
+    return new Blob([arr], { type: "audio/wav" });
 }
