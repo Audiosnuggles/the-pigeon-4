@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>The Pigeon</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <link rel="stylesheet" href="style.css?v=46">
+</head>
+<body>
+
+  <div id="mobile-overlay">
+    <div class="overlay-content">
+      <img src="pigeon.svg" alt="Pigeon">
+      <div class="text-box">
+        <p class="warning">Howdy Visitor!</p>
+        <p class="instruction">
+          The Pigeon is not mobile optimized yet. It's a bit of a desktop diva! <br><br>
+          But hey, you can still try to tame it: Just rotate your device to <strong>landscape mode</strong> and hit that <strong>fullscreen</strong> button. 
+          Enjoy the flight!
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div id="main">
+    <img id="pigeon" src="pigeon.svg" alt="Pigeon">
+    
+    <h1>The Pigeon</h1>
+    
+    <div id="tracks">
+      <div class="track-container">
+        <div class="wave-buttons">
+          <button class="wave-btn" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">□</button>
+          <button class="wave-btn" data-wave="sawtooth">Z</button>
+        </div>
+        <div class="track-color-strip t1-color"></div>
+        <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
+        <canvas id="canvas1" width="750" height="100"></canvas>
+        <div class="controls-right">
+            <button class="mute-btn">Mute</button>
+            <div class="vol-box"><input type="range" class="volume-slider" min="0" max="1" step="0.01" value="0.8"></div>
+            <label class="snap-label"><input type="checkbox" class="snap-checkbox"> Snap</label>
+        </div>
+      </div>
+
+      <div class="track-container">
+        <div class="wave-buttons">
+          <button class="wave-btn" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">□</button>
+          <button class="wave-btn" data-wave="sawtooth">Z</button>
+        </div>
+        <div class="track-color-strip t2-color"></div>
+        <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
+        <canvas id="canvas2" width="750" height="100"></canvas>
+        <div class="controls-right">
+            <button class="mute-btn">Mute</button>
+            <div class="vol-box"><input type="range" class="volume-slider" min="0" max="1" step="0.01" value="0.8"></div>
+            <label class="snap-label"><input type="checkbox" class="snap-checkbox"> Snap</label>
+        </div>
+      </div>
+
+      <div class="track-container">
+        <div class="wave-buttons">
+          <button class="wave-btn" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">□</button>
+          <button class="wave-btn" data-wave="sawtooth">Z</button>
+        </div>
+        <div class="track-color-strip t3-color"></div>
+        <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
+        <canvas id="canvas3" width="750" height="100"></canvas>
+        <div class="controls-right">
+            <button class="mute-btn">Mute</button>
+            <div class="vol-box"><input type="range" class="volume-slider" min="0" max="1" step="0.01" value="0.8"></div>
+            <label class="snap-label"><input type="checkbox" class="snap-checkbox"> Snap</label>
+        </div>
+      </div>
+
+      <div class="track-container">
+        <div class="wave-buttons">
+          <button class="wave-btn" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">□</button>
+          <button class="wave-btn" data-wave="sawtooth">Z</button>
+        </div>
+        <div class="track-color-strip t4-color"></div>
+        <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
+        <canvas id="canvas4" width="750" height="100"></canvas>
+        <div class="controls-right">
+            <button class="mute-btn">Mute</button>
+            <div class="vol-box"><input type="range" class="volume-slider" min="0" max="1" step="0.01" value="0.8"></div>
+            <label class="snap-label"><input type="checkbox" class="snap-checkbox"> Snap</label>
+        </div>
+      </div>
+    </div>
+
+    <div id="trace-module">
+      <div class="trace-sidebar">
+        <span class="label">PERFORMANCE</span>
+        <div class="track-picker">
+          <button class="picker-btn active t1-bg" data-target="0">T1</button>
+          <button class="picker-btn t2-bg" data-target="1">T2</button>
+          <button class="picker-btn t3-bg" data-target="2">T3</button>
+          <button class="picker-btn t4-bg" data-target="3">T4</button>
+        </div>
+        <button id="traceClearBtn">Clear Track</button>
+      </div>
+      
+      <div id="trace-pad">
+        <span class="pad-hint">POKE<br>ME</span>
+      </div>
+
+      <div id="fx-rack">
+        <div class="fx-col">
+          
+          <div class="fx-unit">
+            <div class="fx-header">TAPE DELAY <div class="led on"></div></div>
+            <div class="fx-body">
+              <div class="fx-matrix">
+                <div class="matrix-btn t1-bg active"></div>
+                <div class="matrix-btn t2-bg"></div>
+                <div class="matrix-btn t3-bg active"></div>
+                <div class="matrix-btn t4-bg"></div>
+              </div>
+              <button class="fx-xy-link"></button>
+              <div class="fx-knobs">
+                <div class="knob-group"><div class="knob" style="transform: rotate(45deg);"><div class="tick"></div></div><span>TIME</span></div>
+                <div class="knob-group"><div class="knob" style="transform: rotate(120deg);"><div class="tick"></div></div><span>FDBK</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="fx-unit">
+            <div class="fx-header">SPRING REVERB <div class="led"></div></div>
+            <div class="fx-body">
+              <div class="fx-matrix">
+                <div class="matrix-btn t1-bg"></div>
+                <div class="matrix-btn t2-bg active"></div>
+                <div class="matrix-btn t3-bg"></div>
+                <div class="matrix-btn t4-bg"></div>
+              </div>
+              <button class="fx-xy-link"></button>
+              <div class="fx-knobs">
+                <div class="knob-group"><div class="knob" style="transform: rotate(-30deg);"><div class="tick"></div></div><span>DECAY</span></div>
+                <div class="knob-group"><div class="knob" style="transform: rotate(80deg);"><div class="tick"></div></div><span>MIX</span></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="fx-col fx-bottom">
+          <div class="fx-unit">
+            <div class="fx-header">VIBRATO <div class="led"></div></div>
+            <div class="fx-body">
+              <div class="fx-matrix">
+                <div class="matrix-btn t1-bg active"></div>
+                <div class="matrix-btn t2-bg active"></div>
+                <div class="matrix-btn t3-bg active"></div>
+                <div class="matrix-btn t4-bg active"></div>
+              </div>
+              <button class="fx-xy-link active"></button> <div class="fx-knobs">
+                <div class="knob-group"><div class="knob" style="transform: rotate(-100deg);"><div class="tick"></div></div><span>RATE</span></div>
+                <div class="knob-group"><div class="knob" style="transform: rotate(20deg);"><div class="tick"></div></div><span>DEPTH</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div id="controls">
+      <div class="controls-left">
+        <div class="control-row">
+          <label>Tempo: <input type="number" id="bpmInput" value="120" min="30" max="300"></label>
+          <label>Loop: <input type="checkbox" id="loopCheckbox" checked></label>
+          <label>Harmonize: <input type="checkbox" id="harmonizeCheckbox"></label>
+          <label id="scaleSelectContainer" style="display:none;">
+            Scale: <select id="scaleSelect">
+              <option value="major">Major</option>
+              <option value="minor">Minor</option>
+              <option value="pentatonic">Pentatonic</option>
+            </select>
+          </label>
+        </div>
+        
+        <div class="control-row">
+          <label>Tool: <select id="toolSelect"><option value="draw">Draw</option><option value="erase">Eraser</option></select></label>
+          <label>Brush:
+            <select id="brushSelect">
+              <option value="standard">Standard</option>
+              <option value="variable">Variable</option>
+              <option value="calligraphy">Calligraphy</option>
+              <option value="particles">Particles</option>
+              <option value="fractal">Fractal</option>
+              <option value="chord">Chord</option>
+            </select>
+          </label>
+          <label>Chord: <select id="chordSelect"><option value="major">Major</option><option value="minor">Minor</option><option value="diminished">Dim</option><option value="augmented">Aug</option><option value="sus2">Sus2</option></select></label>
+          <label>Size: <input type="range" id="brushSizeSlider" min="1" max="40" value="5"></label>
+        </div>
+
+        <div class="control-row">
+          <button id="playButton">Play</button>
+          <button id="stopButton">Stop</button>
+          <button id="clearButton">Clear</button>
+          <button id="undoButton">Undo</button>
+          <button id="exportButton">Export Set</button>
+          <button id="importButton">Import Set</button>
+          <button id="exportWavButton">Export WAV</button>
+          <button id="fullscreenBtn">🖥 Fullscreen</button>
+          <input type="file" id="importFileInput" style="display:none;">
+        </div>
+      </div>
+
+      <div id="pattern-machine">
+        <div class="machine-header">
+          <span>PATTERN BANK</span>
+          <button id="saveModeBtn">⏺ SAVE</button>
+        </div>
+        <div class="bank-row">
+          <span class="bank-label">A</span>
+          <button class="pad" data-bank="A" data-idx="0"></button>
+          <button class="pad" data-bank="A" data-idx="1"></button>
+          <button class="pad" data-bank="A" data-idx="2"></button>
+          <button class="pad" data-bank="A" data-idx="3"></button>
+        </div>
+        <div class="bank-row">
+          <span class="bank-label">B</span>
+          <button class="pad" data-bank="B" data-idx="0"></button>
+          <button class="pad" data-bank="B" data-idx="1"></button>
+          <button class="pad" data-bank="B" data-idx="2"></button>
+          <button class="pad" data-bank="B" data-idx="3"></button>
+        </div>
+        <div class="bank-row">
+          <span class="bank-label">C</span>
+          <button class="pad" data-bank="C" data-idx="0"></button>
+          <button class="pad" data-bank="C" data-idx="1"></button>
+          <button class="pad" data-bank="C" data-idx="2"></button>
+          <button class="pad" data-bank="C" data-idx="3"></button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="legal-footer">
+      <a href="impressum.html">Impressum</a> | <a href="datenschutz.html">Privacy Policy</a>
+    </footer>
+
+  </div> 
+
+  <div id="custom-eraser"></div>
+
+  <script src="script.js?v=46"></script>
+</body>
+</html>
