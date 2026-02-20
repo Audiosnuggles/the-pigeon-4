@@ -51,7 +51,18 @@ const tracks = Array.from(document.querySelectorAll(".track-container")).map((c,
     gainNode: null
 }));
 
-// --- Boot ---
+// --- Hilfsfunktionen ---
+function getPos(e, c) {
+    const r = c.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return { 
+        x: (cx - r.left) * (c.width / r.width), 
+        y: (cy - r.top) * (c.height / r.height) 
+    };
+}
+
+// --- Initialisierung ---
 document.addEventListener("DOMContentLoaded", () => {
     tracks.forEach(t => {
         drawGrid(t);
@@ -63,7 +74,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMainControls();
     setupPads();
     setupTracePad();
-    // Initialer Reset: Effekte aus, Sends auf 0
     resetFXUI(updateRoutingFromUI);
 });
 
@@ -80,7 +90,7 @@ function loadInitialData() {
     fetch('default_set.json').then(res => res.json()).then(data => {
         if (data.banks) { patternBanks = data.banks; updatePadUI(patternBanks); }
         if (data.current) loadPatternData(data.current);
-    }).catch(e => console.log("Kein Default-Set gefunden."));
+    }).catch(() => console.log("Default-Set nicht gefunden."));
 }
 
 function loadPatternData(d) {
@@ -246,57 +256,49 @@ function setupDrawing(track) {
         const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
         if (toolSelect.value === "draw") {
             drawing = true;
-            traceCurrentSeg = { points: [{ x, y: pos.y }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
+            let jX = 0, jY = 0;
+            if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+            traceCurrentSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
             track.segments.push(traceCurrentSeg);
+            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
             if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
         } else erase(track, x, pos.y);
     };
     const move = e => {
         if (!drawing && toolSelect.value !== "erase") return;
         const pos = getPos(e, track.canvas);
+        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
         if (drawing) {
-            traceCurrentSeg.points.push({ x: pos.x, y: pos.y });
+            let jX = 0, jY = 0;
+            if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+            traceCurrentSeg.points.push({ x, y: pos.y, jX, jY });
             redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value !== "particles") updateLiveSynth(track, pos.y);
-        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) erase(track, pos.x, pos.y);
+            if (brushSelect.value !== "particles") updateLiveSynth(track, pos.y + jY);
+        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) erase(track, x, pos.y);
     };
-    const stop = () => { if (drawing) { drawing = false; undoStack.push({ trackIdx: track.index }); stopLiveSynth(); redrawTrack(track); } };
+    const stop = () => { if (drawing) { drawing = false; undoStack.push({ trackIdx: track.index, segment: traceCurrentSeg }); stopLiveSynth(); redrawTrack(track); } };
     track.canvas.addEventListener("mousedown", start); track.canvas.addEventListener("mousemove", move); window.addEventListener("mouseup", stop);
     track.canvas.addEventListener("touchstart", start, { passive: false }); track.canvas.addEventListener("touchmove", move, { passive: false }); track.canvas.addEventListener("touchend", stop);
 }
 
-function erase(t, x, y) {
-    t.segments = t.segments.filter(s => !s.points.some(p => Math.hypot(p.x - x, p.y - y) < 20));
-    redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors);
-}
-
-// --- UI Controls ---
 function setupMainControls() {
     document.getElementById("playButton").addEventListener("click", () => {
         if (isPlaying) return;
         initAudio(tracks, updateRoutingFromUI);
         playbackDuration = (60 / (parseFloat(document.getElementById("bpmInput").value) || 120)) * 32;
-        playbackStartTime = audioCtx.currentTime + 0.1;
-        isPlaying = true;
-        scheduleTracks(playbackStartTime);
-        loop();
+        playbackStartTime = audioCtx.currentTime + 0.1; isPlaying = true;
+        scheduleTracks(playbackStartTime); loop();
     });
-
     document.getElementById("stopButton").addEventListener("click", () => {
-        isPlaying = false;
-        cancelAnimationFrame(animationFrameId);
-        activeNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch (e) { } });
-        activeNodes = [];
+        isPlaying = false; cancelAnimationFrame(animationFrameId);
+        activeNodes.forEach(n => { try { n.stop(); } catch (e) { } }); activeNodes = [];
         tracks.forEach(t => { if(t.gainNode) t.gainNode.disconnect(); redrawTrack(t); });
         pigeonImg.style.transform = "scale(1)";
         document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued"));
     });
-
     document.getElementById("fullscreenBtn")?.addEventListener("click", () => {
-        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-        else document.exitFullscreen();
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen();
     });
-
     document.getElementById("undoButton").addEventListener("click", () => {
         if (undoStack.length) {
             const last = undoStack.pop();
@@ -304,12 +306,9 @@ function setupMainControls() {
             redrawTrack(tracks[last.trackIdx], undefined, brushSelect.value, chordIntervals, chordColors);
         }
     });
-
     document.getElementById("clearButton").addEventListener("click", () => { tracks.forEach(t => { t.segments = []; drawGrid(t); }); });
-
     document.getElementById("exportWavButton").addEventListener("click", () => {
-        const btn = document.getElementById("exportWavButton");
-        btn.innerText = "Rendering...";
+        const btn = document.getElementById("exportWavButton"); btn.innerText = "Rendering...";
         setTimeout(() => {
             const bpm = parseFloat(document.getElementById("bpmInput").value) || 120;
             const dur = (60 / bpm) * 32;
@@ -323,23 +322,23 @@ function setupMainControls() {
             });
         }, 50);
     });
+}
 
-    document.getElementById("exportButton").addEventListener("click", () => {
-        const data = JSON.stringify({ current: { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) }, banks: patternBanks });
-        const blob = new Blob([data], { type: "application/json" });
-        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "pigeon_set.json"; a.click();
-    });
-
-    document.getElementById("importButton").addEventListener("click", () => document.getElementById("importFileInput").click());
-    document.getElementById("importFileInput").addEventListener("change", e => {
-        const r = new FileReader();
-        r.onload = evt => { 
-            const d = JSON.parse(evt.target.result); 
-            if (d.banks) { patternBanks = d.banks; updatePadUI(patternBanks); } 
-            loadPatternData(d.current || d); 
-        };
-        r.readAsText(e.target.files[0]);
-    });
+function audioBufferToWav(buffer) {
+    let n = buffer.numberOfChannels, len = buffer.length * n * 2 + 44, arr = new ArrayBuffer(len), view = new DataView(arr);
+    const s32 = (v, o) => view.setUint32(o, v, true);
+    s32(0x46464952, 0); s32(len - 8, 4); s32(0x45564157, 8); s32(0x20746d66, 12); s32(16, 16); 
+    view.setUint16(20, 1, true); view.setUint16(22, n, true); s32(buffer.sampleRate, 24); 
+    s32(buffer.sampleRate * n * 2, 28); view.setUint16(32, n * 2, true); view.setUint16(34, 16, true); 
+    s32(0x61746164, 36); s32(len - 44, 40);
+    let offset = 44; 
+    for (let i = 0; i < buffer.length; i++) {
+        for (let c = 0; c < n; c++) {
+            let s = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]));
+            view.setInt16(offset, (s < 0 ? s * 32768 : s * 32767), true); offset += 2;
+        }
+    }
+    return new Blob([arr], { type: "audio/wav" });
 }
 
 function setupPads() {
@@ -348,7 +347,7 @@ function setupPads() {
         pad.addEventListener("click", () => {
             const b = pad.dataset.bank, i = parseInt(pad.dataset.idx);
             if (isSaveMode) {
-                patternBanks[b][i] = { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave })) };
+                patternBanks[b][i] = { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) };
                 localStorage.setItem("pigeonBanks", JSON.stringify(patternBanks)); isSaveMode = false; document.getElementById("saveModeBtn").classList.remove("active"); updatePadUI(patternBanks);
                 document.querySelectorAll(".pad").forEach(p => p.classList.remove("active")); pad.classList.add("active");
             } else if (patternBanks[b] && patternBanks[b][i]) {
@@ -360,7 +359,6 @@ function setupPads() {
 }
 
 function setupTracePad() {
-    if (!tracePad) return;
     const getPadPos = (e) => { 
         const r = tracePad.getBoundingClientRect(); 
         const cx = e.touches ? e.touches[0].clientX : e.clientX;
@@ -413,14 +411,6 @@ function updateRoutingFromUI() {
     });
 }
 
-function setupTrackControls(t) {
-    const cont = t.canvas.parentElement;
-    cont.querySelectorAll(".wave-btn").forEach(b => b.addEventListener("click", () => { t.wave = b.dataset.wave; cont.querySelectorAll(".wave-btn").forEach(btn => btn.classList.remove("active")); b.classList.add("active"); }));
-    cont.querySelector(".mute-btn").addEventListener("click", e => { t.mute = !t.mute; e.target.style.backgroundColor = t.mute ? "#ff4444" : ""; updateTrackVolume(t); });
-    cont.querySelector(".volume-slider").addEventListener("input", e => { t.vol = parseFloat(e.target.value); updateTrackVolume(t); });
-    cont.querySelector(".snap-checkbox").addEventListener("change", e => t.snap = e.target.checked);
-}
-
 function loop() {
     if (!isPlaying) return;
     let elapsed = audioCtx.currentTime - playbackStartTime;
@@ -434,7 +424,11 @@ function loop() {
         else { isPlaying = false; return; }
     }
     const x = (elapsed / playbackDuration) * 750;
-    if (isTracing && traceCurrentSeg) { traceCurrentSeg.points.push({ x, y: traceCurrentY }); }
+    if (isTracing && traceCurrentSeg) {
+        let jX = 0, jY = 0;
+        if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+        traceCurrentSeg.points.push({ x, y: traceCurrentY, jX, jY });
+    }
     if (isTracing && isEffectMode) {
         const normX = x / 750, normY = 1.0 - (traceCurrentY / 100);
         document.querySelectorAll('.fx-xy-link.active').forEach(l => {
@@ -452,19 +446,10 @@ function loop() {
     animationFrameId = requestAnimationFrame(loop);
 }
 
-function audioBufferToWav(buffer) {
-    let n = buffer.numberOfChannels, len = buffer.length * n * 2 + 44, arr = new ArrayBuffer(len), view = new DataView(arr);
-    const s32 = (v, o) => view.setUint32(o, v, true);
-    s32(0x46464952, 0); s32(len - 8, 4); s32(0x45564157, 8); s32(0x20746d66, 12); s32(16, 16); 
-    view.setUint16(20, 1, true); view.setUint16(22, n, true); s32(buffer.sampleRate, 24); 
-    s32(buffer.sampleRate * n * 2, 28); view.setUint16(32, n * 2, true); view.setUint16(34, 16, true); 
-    s32(0x61746164, 36); s32(len - 44, 40);
-    let offset = 44; 
-    for (let i = 0; i < buffer.length; i++) {
-        for (let c = 0; c < n; c++) {
-            let s = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]));
-            view.setInt16(offset, (s < 0 ? s * 32768 : s * 32767), true); offset += 2;
-        }
-    }
-    return new Blob([arr], { type: "audio/wav" });
+function setupTrackControls(t) {
+    const cont = t.canvas.parentElement;
+    cont.querySelectorAll(".wave-btn").forEach(b => b.addEventListener("click", () => { t.wave = b.dataset.wave; cont.querySelectorAll(".wave-btn").forEach(btn => btn.classList.remove("active")); b.classList.add("active"); }));
+    cont.querySelector(".mute-btn").addEventListener("click", e => { t.mute = !t.mute; e.target.style.backgroundColor = t.mute ? "#ff4444" : ""; updateTrackVolume(t); });
+    cont.querySelector(".volume-slider").addEventListener("input", e => { t.vol = parseFloat(e.target.value); updateTrackVolume(t); });
+    cont.querySelector(".snap-checkbox").addEventListener("change", e => t.snap = e.target.checked);
 }
