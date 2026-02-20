@@ -124,7 +124,6 @@ function loadPatternData(d) {
     }
 }
 
-// --- Zeichen-Logik ---
 function setupDrawing(track) {
     let drawing = false;
     const start = e => {
@@ -170,7 +169,6 @@ function erase(t, x, y) {
     redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors);
 }
 
-// --- Audio Engine: Live & Scheduling ---
 function startLiveSynth(track, y) {
     if (track.mute || track.vol < 0.01) return;
     liveNodes = [];
@@ -248,49 +246,73 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain) {
         
         track.segments.forEach(seg => {
             const brush = seg.brush || "standard";
+            const currentWave = track.wave;
+            
             if (brush === "particles") {
                 seg.points.forEach(p => {
                     const t = Math.max(0, start + (p.x / track.canvas.width) * playbackDuration);
-                    const osc = targetCtx.createOscillator(); osc.type = track.wave;
-                    let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
+                    const osc = targetCtx.createOscillator();
+                    osc.type = currentWave;
+                    let f = mapYToFrequency(p.y, 100);
+                    if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
                     osc.frequency.value = f;
-                    const env = targetCtx.createGain(); env.gain.setValueAtTime(0, t);
-                    env.gain.linearRampToValueAtTime(0.4, t + 0.01); env.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
-                    osc.connect(env).connect(trkG); osc.start(t); osc.stop(t + 0.2);
+                    const env = targetCtx.createGain();
+                    env.gain.setValueAtTime(0, t);
+                    env.gain.linearRampToValueAtTime(0.4, t + 0.01);
+                    env.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+                    osc.connect(env).connect(trkG);
+                    osc.start(t); osc.stop(t + 0.2);
                     if (targetCtx === audioCtx) activeNodes.push(osc);
                 });
                 return;
             }
+
             const sorted = seg.points.slice().sort((a, b) => a.x - b.x);
             if (sorted.length < 2) return;
             let sT = Math.max(0, start + (sorted[0].x / track.canvas.width) * playbackDuration);
             let eT = Math.max(0, start + (sorted[sorted.length - 1].x / track.canvas.width) * playbackDuration);
+
             if (brush === "chord") {
-                chordIntervals[seg.chordType || "major"].forEach(iv => {
-                    const osc = targetCtx.createOscillator(); osc.type = track.wave;
-                    const g = targetCtx.createGain(); g.gain.setValueAtTime(0, sT);
-                    g.gain.linearRampToValueAtTime(0.2, sT + 0.005); g.gain.setValueAtTime(0.2, eT); g.gain.linearRampToValueAtTime(0, eT + 0.05);
+                const intervals = chordIntervals[seg.chordType || "major"];
+                intervals.forEach(iv => {
+                    const osc = targetCtx.createOscillator();
+                    osc.type = currentWave;
+                    const g = targetCtx.createGain();
+                    g.gain.setValueAtTime(0, sT);
+                    g.gain.linearRampToValueAtTime(0.2, sT + 0.005);
+                    g.gain.setValueAtTime(0.2, eT);
+                    g.gain.linearRampToValueAtTime(0, eT + 0.05);
                     osc.connect(g).connect(trkG);
                     sorted.forEach(p => {
                         const t = Math.max(0, start + (p.x / track.canvas.width) * playbackDuration);
-                        let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
+                        let f = mapYToFrequency(p.y, 100);
+                        if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
                         osc.frequency.linearRampToValueAtTime(f * Math.pow(2, iv / 12), t);
                     });
                     osc.start(sT); osc.stop(eT + 0.1);
                     if (targetCtx === audioCtx) activeNodes.push(osc);
                 });
             } else {
-                const osc = targetCtx.createOscillator(); osc.type = track.wave;
-                const g = targetCtx.createGain(); g.gain.setValueAtTime(0, sT);
-                g.gain.linearRampToValueAtTime(0.3, sT + 0.02); g.gain.setValueAtTime(0.3, eT); g.gain.linearRampToValueAtTime(0, eT + 0.1);
+                const osc = targetCtx.createOscillator();
+                osc.type = currentWave;
+                const g = targetCtx.createGain();
+                g.gain.setValueAtTime(0, sT);
+                g.gain.linearRampToValueAtTime(0.3, sT + 0.02);
+                g.gain.setValueAtTime(0.3, eT);
+                g.gain.linearRampToValueAtTime(0, eT + 0.1);
+                
                 if (brush === "fractal") {
-                    const sh = targetCtx.createWaveShaper(); sh.curve = getDistortionCurve();
+                    const sh = targetCtx.createWaveShaper();
+                    sh.curve = getDistortionCurve();
                     osc.connect(sh).connect(g);
-                } else { osc.connect(g); }
+                } else {
+                    osc.connect(g);
+                }
                 g.connect(trkG);
                 sorted.forEach(p => {
                     const t = Math.max(0, start + (p.x / track.canvas.width) * playbackDuration);
-                    let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
+                    let f = mapYToFrequency(p.y, 100);
+                    if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
                     osc.frequency.linearRampToValueAtTime(f, t);
                 });
                 osc.start(sT); osc.stop(eT + 0.2);
@@ -300,7 +322,6 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain) {
     });
 }
 
-// --- WAV Export Helper ---
 function audioBufferToWav(buffer) {
     let n = buffer.numberOfChannels, len = buffer.length * n * 2 + 44, arr = new ArrayBuffer(len), view = new DataView(arr);
     const s32 = (v, o) => view.setUint32(o, v, true);
@@ -318,7 +339,6 @@ function audioBufferToWav(buffer) {
     return new Blob([arr], { type: "audio/wav" });
 }
 
-// --- UI Controls ---
 function setupMainControls() {
     document.getElementById("playButton").addEventListener("click", () => {
         if (isPlaying) return;
@@ -457,7 +477,6 @@ function setupTrackControls(t) {
     cont.querySelector(".snap-checkbox").addEventListener("change", e => t.snap = e.target.checked);
 }
 
-// --- Haupt-Loop ---
 function loop() {
     if (!isPlaying) return;
     let elapsed = audioCtx.currentTime - playbackStartTime;

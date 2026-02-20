@@ -4,32 +4,36 @@ export function drawGrid(t) {
     t.ctx.restore(); 
 }
 
+// Hilfsfunktionen für die Pinsel-Stile
+function drawSegmentStandard(ctx, pts, idx1, idx2, size) { ctx.lineWidth = size; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(pts[idx1].x, pts[idx1].y); ctx.lineTo(pts[idx2].x, pts[idx2].y); ctx.stroke(); }
+function drawSegmentVariable(ctx, pts, idx1, idx2, size) { const dist = Math.hypot(pts[idx2].x - pts[idx1].x, pts[idx2].y - pts[idx1].y); ctx.lineWidth = size * (1 + Math.max(0, (10 - dist) / 5)); ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(pts[idx1].x, pts[idx1].y); ctx.lineTo(pts[idx2].x, pts[idx2].y); ctx.stroke(); }
+function drawSegmentCalligraphy(ctx, pts, idx1, idx2, size) { const angle = -Math.PI / 4, dx = Math.cos(angle) * size, dy = Math.sin(angle) * size; ctx.fillStyle = "#000"; ctx.beginPath(); ctx.moveTo(pts[idx1].x - dx, pts[idx1].y - dy); ctx.lineTo(pts[idx1].x + dx, pts[idx1].y + dy); ctx.lineTo(pts[idx2].x + dx, pts[idx2].y + dy); ctx.lineTo(pts[idx2].x - dx, pts[idx2].y - dy); ctx.fill(); }
 function drawSegmentParticles(ctx, pts, idx1, idx2, size) { ctx.fillStyle = "rgba(0,0,0,0.6)"; for(let i=0; i<2; i++) { const ox = (Math.random()-0.5)*size*2, oy = (Math.random()-0.5)*size*2; ctx.beginPath(); ctx.arc(pts[idx2].x+ox, pts[idx2].y+oy, Math.max(1, size/3), 0, Math.PI*2); ctx.fill(); } }
+function drawSegmentFractal(ctx, pts, idx1, idx2, size) { ctx.lineWidth = size; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(pts[idx1].x + (pts[idx1].jX||0), pts[idx1].y + (pts[idx1].jY||0)); ctx.lineTo(pts[idx2].x + (pts[idx2].jX||0), pts[idx2].y + (pts[idx2].jY||0)); ctx.stroke(); }
 
-export function redrawTrack(track, playheadX, currentBrush, chordIntervals, chordColors) {
-    drawGrid(track);
-    const { ctx } = track;
-
-    track.segments.forEach(seg => {
+export function redrawTrack(t, hx, brushSelectValue, chordIntervals, chordColors) {
+    drawGrid(t);
+    t.segments.forEach(seg => {
         const pts = seg.points; if (pts.length < 1) return;
-        const brush = seg.brush || "standard";
-        const size = seg.thickness || 5;
-        ctx.beginPath(); ctx.strokeStyle = "#000"; ctx.lineWidth = size; ctx.lineCap = "round";
-
-        if (brush === "chord") {
-            const intervals = chordIntervals[seg.chordType || "major"];
-            intervals.forEach((iv, i) => {
-                ctx.save(); ctx.beginPath(); ctx.strokeStyle = chordColors[i % 3]; ctx.moveTo(pts[0].x, pts[0].y - iv * 5);
-                pts.forEach(p => ctx.lineTo(p.x, p.y - iv * 5)); ctx.stroke(); ctx.restore();
-            });
-        } else if (brush === "particles") {
-            for (let i = 1; i < pts.length; i++) drawSegmentParticles(ctx, pts, i - 1, i, size);
-        } else {
-            ctx.moveTo(pts[0].x, pts[0].y); pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
-        }
+        const brush = seg.brush || "standard"; const size = seg.thickness || 5;
+        t.ctx.beginPath(); t.ctx.strokeStyle = "#000"; t.ctx.lineWidth = size;
+        if(brush === "chord"){ 
+            chordIntervals[seg.chordType||"major"].forEach((iv,i) => { 
+                t.ctx.save(); t.ctx.beginPath(); t.ctx.strokeStyle = chordColors[i%3]; t.ctx.lineWidth = size; 
+                t.ctx.moveTo(pts[0].x, pts[0].y-iv*5); for(let k=1;k<pts.length;k++) t.ctx.lineTo(pts[k].x,pts[k].y-iv*5); 
+                t.ctx.stroke(); t.ctx.restore(); 
+            }); 
+        } else if(brush === "particles"){ for(let i=1;i<pts.length;i++) drawSegmentParticles(t.ctx, pts, i-1, i, size); } 
+        else { 
+            for(let i=1;i<pts.length;i++){ 
+                switch(brush){ 
+                    case "variable": drawSegmentVariable(t.ctx, pts, i-1, i, size); break; 
+                    case "calligraphy": drawSegmentCalligraphy(t.ctx, pts, i-1, i, size); break; 
+                    case "fractal": drawSegmentFractal(t.ctx, pts, i-1, i, size); break; 
+                    default: drawSegmentStandard(t.ctx, pts, i-1, i, size); 
+                } 
+            }
+        } 
     });
-
-    if (playheadX !== undefined) {
-        ctx.save(); ctx.beginPath(); ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.moveTo(playheadX, 0); ctx.lineTo(playheadX, 100); ctx.stroke(); ctx.restore();
-    }
+    if(hx !== undefined){ t.ctx.save(); t.ctx.beginPath(); t.ctx.strokeStyle = "red"; t.ctx.lineWidth = 2; t.ctx.moveTo(hx,0); t.ctx.lineTo(hx,100); t.ctx.stroke(); t.ctx.restore(); }
 }
