@@ -1,5 +1,14 @@
 export let audioCtx, masterGain, analyser, fxNodes, trackSends = [{}, {}, {}, {}];
 
+export function getDistortionCurve() {
+    const n = 22050, curve = new Float32Array(n), amount = 80;
+    for (let i = 0; i < n; ++i) { 
+        let x = i * 2 / n - 1; 
+        curve[i] = (3 + amount) * x * 20 * (Math.PI / 180) / (Math.PI + amount * Math.abs(x)); 
+    }
+    return curve;
+}
+
 function generateReverbIR(ctx, duration) {
     const sampleRate = ctx.sampleRate;
     const length = sampleRate * duration;
@@ -60,13 +69,17 @@ export function updateTrackVolume(t) {
     if(t.gainNode && audioCtx) t.gainNode.gain.setTargetAtTime(t.mute ? 0 : t.vol, audioCtx.currentTime, 0.05); 
 }
 
+export function mapYToFrequency(y, h) { return Math.max(20, Math.min(1000-(y/h)*920, 20000)); }
+
+export function quantizeFrequency(f, scale) {
+    let m = Math.round(69 + 12 * Math.log2(f / 440));
+    let pat = (scale === "major") ? [0, 2, 4, 5, 7, 9, 11] : (scale === "minor") ? [0, 2, 3, 5, 7, 8, 10] : [0, 3, 5, 7, 10];
+    let mod = m % 12, b = pat[0], md = 99;
+    pat.forEach(p => { if (Math.abs(p - mod) < md) { md = Math.abs(p - mod); b = p; } });
+    return 440 * Math.pow(2, (m - mod + b - 69) / 12);
+}
+
 export function connectTrackToFX(trackGainNode, trackIndex) {
     if(!trackGainNode || !audioCtx) return;
     ['delay', 'reverb', 'vibrato'].forEach(fx => { trackGainNode.connect(trackSends[trackIndex][fx]); });
-}
-
-export function getDistortionCurve() {
-    const n = 22050, curve = new Float32Array(n), amount = 80;
-    for (let i = 0; i < n; ++i) { let x = i * 2 / n - 1; curve[i] = (3 + amount) * x * 20 * (Math.PI / 180) / (Math.PI + amount * Math.abs(x)); }
-    return curve;
 }
