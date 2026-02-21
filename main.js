@@ -57,17 +57,19 @@ function saveState() {
 function getKnobVal(paramName) {
     let val = 0;
     document.querySelectorAll('.knob').forEach(k => {
-        if (k.nextElementSibling.innerText === paramName) val = parseFloat(k.dataset.val || 0.5);
+        if (k.nextElementSibling && k.nextElementSibling.textContent.trim() === paramName) {
+            val = parseFloat(k.dataset.val || 0.5);
+        }
     });
     return val;
 }
 
-// FIX: Kugelsicheres Auslesen der Matrix über den Titel (ignoriert die HTML-Reihenfolge)
+// FIX: Absolut sicheres DOM-Reading mit textContent statt innerText
 function getMatrixStateByName(fxName, trackIndex) {
     let isActive = false;
     document.querySelectorAll('.fx-unit').forEach(unit => {
         const header = unit.querySelector('.fx-header');
-        if (header && header.innerText.toUpperCase().includes(fxName)) {
+        if (header && header.textContent.toUpperCase().includes(fxName)) {
             const btn = unit.querySelectorAll('.matrix-btn')[trackIndex];
             if (btn && btn.classList.contains('active')) isActive = true;
         }
@@ -75,11 +77,10 @@ function getMatrixStateByName(fxName, trackIndex) {
     return isActive;
 }
 
-// FIX: Kugelsicheres Setzen der Matrix über den Titel
 function setMatrixStateByName(fxName, trackIndex, isActive) {
     document.querySelectorAll('.fx-unit').forEach(unit => {
         const header = unit.querySelector('.fx-header');
-        if (header && header.innerText.toUpperCase().includes(fxName)) {
+        if (header && header.textContent.toUpperCase().includes(fxName)) {
             const btn = unit.querySelectorAll('.matrix-btn')[trackIndex];
             if (btn) {
                 if (isActive) btn.classList.add('active');
@@ -134,7 +135,8 @@ function applyAllFXFromUI() {
     if (!audioCtx) return;
     document.querySelectorAll('.knob').forEach(knob => {
         const val = parseFloat(knob.dataset.val || 0.5);
-        const param = knob.nextElementSibling.innerText;
+        if (!knob.nextElementSibling) return;
+        const param = knob.nextElementSibling.textContent.trim();
         if (param === "TIME") fxNodes.delay.node.delayTime.value = val * 1.0;
         if (param === "FDBK") fxNodes.delay.feedback.gain.value = val * 0.9;
         if (param === "MIX") fxNodes.reverb.mix.gain.value = val * 1.5;
@@ -181,7 +183,7 @@ function loadPatternData(d) {
         
         const updateKnob = (paramName, rawVal, multiplier) => {
             document.querySelectorAll('.knob').forEach(knob => {
-                if (knob.nextElementSibling.innerText === paramName) {
+                if (knob.nextElementSibling && knob.nextElementSibling.textContent.trim() === paramName) {
                     const normVal = rawVal / multiplier;
                     knob.dataset.val = normVal;
                     knob.style.transform = `rotate(${-135 + (normVal * 270)}deg)`;
@@ -523,7 +525,22 @@ function setupMainControls() {
     });
     
     document.getElementById("importButton").addEventListener("click", () => document.getElementById("importFileInput").click());
-    document.getElementById("importFileInput").addEventListener("change", e => { const r = new FileReader(); r.onload = evt => { const d = JSON.parse(evt.target.result); if (d.banks) { patternBanks = d.banks; updatePadUI(patternBanks); } loadPatternData(d.current || d); }; r.readAsText(e.target.files[0]); });
+    
+    // FIX: Import Input wird jetzt sauber zurückgesetzt, damit dieselbe Datei mehrfach geladen werden kann
+    document.getElementById("importFileInput").addEventListener("change", e => { 
+        const file = e.target.files[0];
+        if(!file) return;
+        const r = new FileReader(); 
+        r.onload = evt => { 
+            try {
+                const d = JSON.parse(evt.target.result); 
+                if (d.banks) { patternBanks = d.banks; updatePadUI(patternBanks); } 
+                loadPatternData(d.current || d); 
+            } catch(err) { console.error("Fehler beim Laden des Sets:", err); }
+        }; 
+        r.readAsText(file); 
+        e.target.value = ''; // Wichtig!
+    });
 }
 
 function setupPads() {
@@ -555,10 +572,13 @@ function getLinkedFX() {
     const links = document.querySelectorAll('.fx-xy-link.active');
     let linked = [];
     links.forEach(l => {
-        const title = l.closest('.fx-unit').querySelector('.fx-header').innerText;
-        if(title.includes("DELAY")) linked.push("delay");
-        if(title.includes("REVERB")) linked.push("reverb");
-        if(title.includes("VIBRATO")) linked.push("vibrato");
+        const header = l.closest('.fx-unit').querySelector('.fx-header');
+        if (header) {
+            const title = header.textContent.toUpperCase();
+            if(title.includes("DELAY")) linked.push("delay");
+            if(title.includes("REVERB")) linked.push("reverb");
+            if(title.includes("VIBRATO")) linked.push("vibrato");
+        }
     });
     return linked;
 }
@@ -597,10 +617,25 @@ function setupTracePad() {
 function setupFX() {
     document.querySelectorAll('.knob').forEach(knob => {
         setupKnob(knob, (val) => {
-            if (!audioCtx) return; const unit = knob.closest('.fx-unit'), title = unit.querySelector('.fx-header').innerText, param = knob.nextElementSibling.innerText;
-            if (title.includes("DELAY")) { if (param === "TIME") fxNodes.delay.node.delayTime.setTargetAtTime(val * 1.0, audioCtx.currentTime, 0.05); if (param === "FDBK") fxNodes.delay.feedback.gain.setTargetAtTime(val * 0.9, audioCtx.currentTime, 0.05); }
-            else if (title.includes("REVERB") && param === "MIX") fxNodes.reverb.mix.gain.setTargetAtTime(val * 1.5, audioCtx.currentTime, 0.05);
-            else if (title.includes("VIBRATO")) { if (param === "RATE") fxNodes.vibrato.lfo.frequency.setTargetAtTime(val * 20, audioCtx.currentTime, 0.05); if (param === "DEPTH") fxNodes.vibrato.depthNode.gain.setTargetAtTime(val * 0.01, audioCtx.currentTime, 0.05); }
+            if (!audioCtx) return; 
+            const unit = knob.closest('.fx-unit');
+            const header = unit.querySelector('.fx-header');
+            if (!header || !knob.nextElementSibling) return;
+            
+            const title = header.textContent.toUpperCase();
+            const param = knob.nextElementSibling.textContent.trim();
+            
+            if (title.includes("DELAY")) { 
+                if (param === "TIME") fxNodes.delay.node.delayTime.setTargetAtTime(val * 1.0, audioCtx.currentTime, 0.05); 
+                if (param === "FDBK") fxNodes.delay.feedback.gain.setTargetAtTime(val * 0.9, audioCtx.currentTime, 0.05); 
+            }
+            else if (title.includes("REVERB") && param === "MIX") {
+                fxNodes.reverb.mix.gain.setTargetAtTime(val * 1.5, audioCtx.currentTime, 0.05);
+            }
+            else if (title.includes("VIBRATO")) { 
+                if (param === "RATE") fxNodes.vibrato.lfo.frequency.setTargetAtTime(val * 20, audioCtx.currentTime, 0.05); 
+                if (param === "DEPTH") fxNodes.vibrato.depthNode.gain.setTargetAtTime(val * 0.01, audioCtx.currentTime, 0.05); 
+            }
         });
     });
     document.querySelectorAll('.matrix-btn').forEach(btn => btn.addEventListener('click', () => { if (!audioCtx) initAudio(tracks, updateRoutingFromUI); btn.classList.toggle('active'); updateRoutingFromUI(); }));
@@ -610,9 +645,21 @@ function setupFX() {
 function updateRoutingFromUI() {
     if (!audioCtx) return;
     document.querySelectorAll('.fx-unit').forEach(unit => {
-        const title = unit.querySelector('.fx-header').innerText, fxName = title.includes("DELAY") ? "delay" : title.includes("REVERB") ? "reverb" : "vibrato";
-        unit.querySelectorAll('.matrix-btn').forEach((btn, idx) => { const active = btn.classList.contains('active'); trackSends[idx][fxName].gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.05); });
-        unit.querySelector('.led')?.classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
+        const header = unit.querySelector('.fx-header');
+        if(!header) return;
+        const title = header.textContent.toUpperCase();
+        let fxName = "delay";
+        if (title.includes("REVERB")) fxName = "reverb";
+        if (title.includes("VIBRATO")) fxName = "vibrato";
+        
+        unit.querySelectorAll('.matrix-btn').forEach((btn, idx) => { 
+            const active = btn.classList.contains('active'); 
+            if(trackSends[idx] && trackSends[idx][fxName]){
+                trackSends[idx][fxName].gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.05); 
+            }
+        });
+        const led = unit.querySelector('.led');
+        if (led) led.classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
     });
 }
 
