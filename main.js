@@ -42,7 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.body.classList.toggle("eraser-mode", toolSelect.value === "erase");
 });
 
-// --- Hilfsfunktionen & Undo Snapshot ---
+// --- Hilfsfunktionen & WAV Converter ---
 function getPos(e, c) {
     const r = c.getBoundingClientRect();
     const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY;
@@ -62,13 +62,55 @@ function getKnobVal(paramName) {
     return val;
 }
 
-function getMatrixState(fxIndex, trackIndex) {
-    const units = document.querySelectorAll('.fx-unit');
-    if (units[fxIndex]) {
-        const btn = units[fxIndex].querySelectorAll('.matrix-btn')[trackIndex];
-        return btn ? btn.classList.contains('active') : false;
+// FIX: Kugelsicheres Auslesen der Matrix über den Titel (ignoriert die HTML-Reihenfolge)
+function getMatrixStateByName(fxName, trackIndex) {
+    let isActive = false;
+    document.querySelectorAll('.fx-unit').forEach(unit => {
+        const header = unit.querySelector('.fx-header');
+        if (header && header.innerText.toUpperCase().includes(fxName)) {
+            const btn = unit.querySelectorAll('.matrix-btn')[trackIndex];
+            if (btn && btn.classList.contains('active')) isActive = true;
+        }
+    });
+    return isActive;
+}
+
+// FIX: Kugelsicheres Setzen der Matrix über den Titel
+function setMatrixStateByName(fxName, trackIndex, isActive) {
+    document.querySelectorAll('.fx-unit').forEach(unit => {
+        const header = unit.querySelector('.fx-header');
+        if (header && header.innerText.toUpperCase().includes(fxName)) {
+            const btn = unit.querySelectorAll('.matrix-btn')[trackIndex];
+            if (btn) {
+                if (isActive) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+            const led = unit.querySelector('.led');
+            if (led) led.classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
+        }
+    });
+}
+
+function audioBufferToWav(buffer) {
+    let numOfChan = buffer.numberOfChannels, length = buffer.length * numOfChan * 2 + 44,
+        bufferArray = new ArrayBuffer(length), view = new DataView(bufferArray),
+        channels = [], i, sample, offset = 0, pos = 0;
+    const setUint16 = data => { view.setUint16(pos, data, true); pos += 2; };
+    const setUint32 = data => { view.setUint32(pos, data, true); pos += 4; };
+    setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157);
+    setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
+    setUint32(buffer.sampleRate); setUint32(buffer.sampleRate * 2 * numOfChan);
+    setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164); setUint32(length - 44);
+    for (i = 0; i < buffer.numberOfChannels; i++) channels.push(buffer.getChannelData(i));
+    while (pos < length) {
+        for (i = 0; i < numOfChan; i++) {
+            sample = Math.max(-1, Math.min(1, channels[i][offset]));
+            sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            view.setInt16(pos, sample, true); pos += 2;
+        }
+        offset++;
     }
-    return false;
+    return new Blob([bufferArray], { type: "audio/wav" });
 }
 
 // --- Radiergummi Cursor Logik ---
@@ -130,20 +172,10 @@ function loadPatternData(d) {
     
     if (d.fx) {
         if (d.fx.matrix) {
-            const units = document.querySelectorAll('.fx-unit');
             d.fx.matrix.forEach((m, i) => {
-                const setBtn = (fxIdx, isActive) => {
-                    if (units[fxIdx]) {
-                        const btn = units[fxIdx].querySelectorAll('.matrix-btn')[i];
-                        if (btn) {
-                            if (isActive) btn.classList.add('active');
-                            else btn.classList.remove('active');
-                        }
-                    }
-                };
-                setBtn(0, m.delay);
-                setBtn(1, m.reverb);
-                setBtn(2, m.vibrato);
+                setMatrixStateByName("DELAY", i, m.delay);
+                setMatrixStateByName("REVERB", i, m.reverb);
+                setMatrixStateByName("VIBRATO", i, m.vibrato);
             });
         }
         
@@ -230,10 +262,15 @@ function triggerParticleGrain(track, y) {
     activeNodes.push(osc);
 }
 
-function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain) {
+function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, offlineFX = null) {
     tracks.forEach(track => {
         const trkG = targetCtx.createGain(); trkG.connect(targetDest); trkG.gain.value = track.mute ? 0 : track.vol;
         if (targetCtx === audioCtx) { track.gainNode = trkG; connectTrackToFX(trkG, track.index); }
+        else if (offlineFX) { 
+            if (getMatrixStateByName("DELAY", track.index)) trkG.connect(offlineFX.delay);
+            if (getMatrixStateByName("VIBRATO", track.index)) trkG.connect(offlineFX.vibrato);
+        }
+        
         track.segments.forEach(seg => {
             const brush = seg.brush || "standard", sorted = seg.points.slice().sort((a, b) => a.x - b.x);
             if (sorted.length < 2 && brush !== "particles") return;
@@ -274,9 +311,7 @@ function setupDrawing(track) {
         e.preventDefault(); 
         initAudio(tracks, updateRoutingFromUI); 
         if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-        
         saveState(); 
-
         const pos = getPos(e, track.canvas); 
         const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
         
@@ -337,8 +372,6 @@ function erase(t, x, y) {
 }
 
 function setupMainControls() {
-
-    // --- Aufnahme-Logik (Live REC Button) ---
     let mediaRecorder = null;
     let recordedChunks = [];
     const recBtn = document.getElementById("recButton");
@@ -359,17 +392,23 @@ function setupMainControls() {
                 recordedChunks = [];
 
                 mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(recordedChunks, { type: "audio/webm" });
-                    const url = URL.createObjectURL(blob);
+                mediaRecorder.onstop = async () => {
+                    recBtn.innerText = "⏳ Saving...";
+                    const webmBlob = new Blob(recordedChunks, { type: "audio/webm" });
+                    const arrayBuffer = await webmBlob.arrayBuffer();
+                    const decodedAudio = await audioCtx.decodeAudioData(arrayBuffer);
+                    const wavBlob = audioBufferToWav(decodedAudio);
+
+                    const url = URL.createObjectURL(wavBlob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = "pigeon_live_recording.webm";
+                    a.download = "pigeon_live_recording.wav";
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                     masterGain.disconnect(dest);
+                    recBtn.innerText = "⏺ Rec";
                 };
 
                 mediaRecorder.start();
@@ -379,55 +418,56 @@ function setupMainControls() {
         });
     }
 
-    // --- Export Loop (WAV) Logik ---
     const exportWavBtn = document.getElementById("exportWavButton");
-    exportWavBtn.addEventListener("click", () => {
-        if (!audioCtx) initAudio(tracks, updateRoutingFromUI);
-        if (audioCtx.state === "suspended") audioCtx.resume();
-
+    exportWavBtn.addEventListener("click", async () => {
         exportWavBtn.innerText = "⏳ Exporting...";
         exportWavBtn.disabled = true;
 
-        const wasPlaying = isPlaying;
-        if (isPlaying) document.getElementById("stopButton").click();
-
-        const dest = audioCtx.createMediaStreamDestination();
-        masterGain.connect(dest);
-        const loopRec = new MediaRecorder(dest.stream);
-        const chunks = [];
-
-        loopRec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-        loopRec.onstop = () => {
-            const blob = new Blob(chunks, { type: "audio/webm" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "pigeon_loop.webm";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            exportWavBtn.innerText = "Export WAV";
-            exportWavBtn.disabled = false;
-            masterGain.disconnect(dest);
-            
-            if (wasPlaying) document.getElementById("playButton").click();
-        };
-
-        loopRec.start();
         const bpm = parseFloat(document.getElementById("bpmInput").value) || 120;
         const loopDur = (60 / bpm) * 32;
+        const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
         
-        scheduleTracks(audioCtx.currentTime, audioCtx, masterGain);
+        const offCtx = new OfflineAudioContext(2, sampleRate * loopDur, sampleRate);
+        const mDest = offCtx.createGain(); 
+        mDest.connect(offCtx.destination);
         
-        setTimeout(() => {
-            loopRec.stop();
-        }, (loopDur * 1000) + 500); 
+        const fxOff = {
+            delay: offCtx.createDelay(),
+            delayFbk: offCtx.createGain(),
+            vibrato: offCtx.createDelay(),
+            vibLfo: offCtx.createOscillator(),
+            vibDepth: offCtx.createGain()
+        };
+        
+        fxOff.delay.delayTime.value = getKnobVal("TIME") * 1.0;
+        fxOff.delayFbk.gain.value = getKnobVal("FDBK") * 0.9;
+        fxOff.delay.connect(fxOff.delayFbk); fxOff.delayFbk.connect(fxOff.delay);
+        fxOff.delay.connect(mDest);
+        
+        fxOff.vibrato.delayTime.value = 0.03;
+        fxOff.vibLfo.frequency.value = getKnobVal("RATE") * 20;
+        fxOff.vibDepth.gain.value = getKnobVal("DEPTH") * 0.01;
+        fxOff.vibLfo.connect(fxOff.vibDepth); fxOff.vibDepth.connect(fxOff.vibrato.delayTime);
+        fxOff.vibLfo.start(0); fxOff.vibrato.connect(mDest);
+
+        scheduleTracks(0, offCtx, mDest, fxOff);
+        
+        const renderedBuffer = await offCtx.startRendering();
+        const wavBlob = audioBufferToWav(renderedBuffer);
+        
+        const url = URL.createObjectURL(wavBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "pigeon_perfect_loop.wav";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        exportWavBtn.innerText = "Export WAV";
+        exportWavBtn.disabled = false;
     });
 
-
-    // --- Restliche Buttons ---
     document.getElementById("playButton").addEventListener("click", () => {
         if (isPlaying) return; 
         initAudio(tracks, updateRoutingFromUI); 
@@ -473,7 +513,7 @@ function setupMainControls() {
                     delay: { time: getKnobVal("TIME") * 1.0, feedback: getKnobVal("FDBK") * 0.9 }, 
                     reverb: { mix: getKnobVal("MIX") * 1.5 }, 
                     vibrato: { rate: getKnobVal("RATE") * 20, depth: getKnobVal("DEPTH") * 0.01 }, 
-                    matrix: tracks.map((_, i) => ({ delay: getMatrixState(0, i), reverb: getMatrixState(1, i), vibrato: getMatrixState(2, i) })) 
+                    matrix: tracks.map((_, i) => ({ delay: getMatrixStateByName("DELAY", i), reverb: getMatrixStateByName("REVERB", i), vibrato: getMatrixStateByName("VIBRATO", i) })) 
                 }, 
                 tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) 
             }, 
@@ -498,7 +538,7 @@ function setupPads() {
                         delay: { time: getKnobVal("TIME") * 1.0, feedback: getKnobVal("FDBK") * 0.9 }, 
                         reverb: { mix: getKnobVal("MIX") * 1.5 }, 
                         vibrato: { rate: getKnobVal("RATE") * 20, depth: getKnobVal("DEPTH") * 0.01 }, 
-                        matrix: tracks.map((_, trackIdx) => ({ delay: getMatrixState(0, trackIdx), reverb: getMatrixState(1, trackIdx), vibrato: getMatrixState(2, trackIdx) })) 
+                        matrix: tracks.map((_, trackIdx) => ({ delay: getMatrixStateByName("DELAY", trackIdx), reverb: getMatrixStateByName("REVERB", trackIdx), vibrato: getMatrixStateByName("VIBRATO", trackIdx) })) 
                     },
                     tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) 
                 };
