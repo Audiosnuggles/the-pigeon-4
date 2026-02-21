@@ -72,9 +72,9 @@ function loadPatternData(d) {
         if (d.fx.matrix) {
             d.fx.matrix.forEach((m, i) => {
                 const units = document.querySelectorAll('.fx-unit');
-                units[0].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.delay);
-                units[1].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.reverb);
-                units[2].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.vibrato);
+                if(units[0]) units[0].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.delay);
+                if(units[1]) units[1].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.reverb);
+                if(units[2]) units[2].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.vibrato);
             });
             updateRoutingFromUI();
         }
@@ -88,6 +88,7 @@ function loadPatternData(d) {
             const cont = t.canvas.parentElement;
             cont.querySelector(".volume-slider").value = t.vol;
             cont.querySelector(".mute-btn").style.backgroundColor = t.mute ? "#ff4444" : "";
+            const snapBox = cont.querySelector(".snap-checkbox"); if(snapBox) snapBox.checked = t.snap;
             cont.querySelectorAll(".wave-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.wave === t.wave));
             redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors);
         });
@@ -100,11 +101,11 @@ function startLiveSynth(track, y) {
     liveNodes = []; liveGainNode = audioCtx.createGain(); liveGainNode.gain.setValueAtTime(0, audioCtx.currentTime);
     liveGainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.01);
     let freq = mapYToFrequency(y, track.canvas.height); if (harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value);
-    const ivs = (brushSelect.value === "chord") ? chordIntervals[chordSelect.value] : [0];
+    const brush = brushSelect.value; const ivs = (brush === "chord") ? chordIntervals[chordSelect.value] : [0];
     ivs.forEach(iv => {
         const osc = audioCtx.createOscillator(); osc.type = track.wave;
         osc.frequency.setValueAtTime(freq * Math.pow(2, iv / 12), audioCtx.currentTime);
-        if(brushSelect.value === "fractal") { const sh = audioCtx.createWaveShaper(); sh.curve = getDistortionCurve(); osc.connect(sh).connect(liveGainNode); }
+        if(brush === "fractal") { const sh = audioCtx.createWaveShaper(); sh.curve = getDistortionCurve(); osc.connect(sh).connect(liveGainNode); }
         else osc.connect(liveGainNode);
         osc.start(); liveNodes.push(osc);
     });
@@ -122,6 +123,7 @@ function stopLiveSynth() {
     if (!liveGainNode) return;
     const gn = liveGainNode; gn.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
     setTimeout(() => { liveNodes.forEach(n => { try { n.stop(); } catch(e){} }); if (gn.out) gn.out.disconnect(); gn.disconnect(); }, 100);
+    liveNodes = []; liveGainNode = null;
 }
 
 function triggerParticleGrain(track, y) {
@@ -170,20 +172,23 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain) {
 function setupDrawing(track) {
     let drawing = false;
     const start = e => {
-        e.preventDefault(); initAudio(tracks, updateRoutingFromUI); const pos = getPos(e, track.canvas);
-        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
+        e.preventDefault(); initAudio(tracks, updateRoutingFromUI); if (audioCtx.state === "suspended") audioCtx.resume();
+        const pos = getPos(e, track.canvas); const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
         if (toolSelect.value === "draw") {
-            drawing = true; traceCurrentSeg = { points: [{ x, y: pos.y }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
+            drawing = true; let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+            traceCurrentSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
             track.segments.push(traceCurrentSeg); redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
             if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
         } else erase(track, x, pos.y);
     };
     const move = e => {
         if (!drawing && toolSelect.value !== "erase") return; const pos = getPos(e, track.canvas);
-        if (drawing) { 
-            traceCurrentSeg.points.push({ x: pos.x, y: pos.y }); redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
+        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
+        if (drawing) {
+            let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+            traceCurrentSeg.points.push({ x, y: pos.y, jX, jY }); redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
             if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else updateLiveSynth(track, pos.y);
-        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) erase(track, pos.x, pos.y);
+        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) erase(track, x, pos.y);
     };
     const stop = () => { if (drawing) { drawing = false; undoStack.push({ trackIdx: track.index }); stopLiveSynth(); redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors); } };
     track.canvas.addEventListener("mousedown", start); track.canvas.addEventListener("mousemove", move); window.addEventListener("mouseup", stop);
@@ -192,7 +197,6 @@ function setupDrawing(track) {
 
 function erase(t, x, y) { t.segments = t.segments.filter(s => !s.points.some(p => Math.hypot(p.x - x, p.y - y) < 20)); redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); }
 
-// --- UI Controls ---
 function setupMainControls() {
     document.getElementById("playButton").addEventListener("click", () => {
         if (isPlaying) return; initAudio(tracks, updateRoutingFromUI); if (audioCtx.state === "suspended") audioCtx.resume();
@@ -208,7 +212,19 @@ function setupMainControls() {
     document.getElementById("undoButton").addEventListener("click", () => { if (undoStack.length) { const last = undoStack.pop(); tracks[last.trackIdx].segments.pop(); redrawTrack(tracks[last.trackIdx], undefined, brushSelect.value, chordIntervals, chordColors); } });
     document.getElementById("clearButton").addEventListener("click", () => { tracks.forEach(t => { t.segments = []; drawGrid(t); }); });
     document.getElementById("exportButton").addEventListener("click", () => {
-        const data = JSON.stringify({ current: { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, fx: { delay: { time: fxNodes.delay.node.delayTime.value, feedback: fxNodes.delay.feedback.gain.value }, reverb: { mix: fxNodes.reverb.mix.gain.value }, vibrato: { rate: fxNodes.vibrato.lfo.frequency.value, depth: fxNodes.vibrato.depthNode.gain.value }, matrix: tracks.map((_, i) => ({ delay: trackSends[i].delay.gain.value > 0, reverb: trackSends[i].reverb.gain.value > 0, vibrato: trackSends[i].vibrato.gain.value > 0 })) }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) }, banks: patternBanks });
+        const data = JSON.stringify({ 
+            current: { 
+                settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, 
+                fx: { 
+                    delay: { time: fxNodes.delay.node.delayTime.value, feedback: fxNodes.delay.feedback.gain.value }, 
+                    reverb: { mix: fxNodes.reverb.mix.gain.value }, 
+                    vibrato: { rate: fxNodes.vibrato.lfo.frequency.value, depth: fxNodes.vibrato.depthNode.gain.value }, 
+                    matrix: tracks.map((_, i) => ({ delay: trackSends[i].delay.gain.value > 0, reverb: trackSends[i].reverb.gain.value > 0, vibrato: trackSends[i].vibrato.gain.value > 0 })) 
+                }, 
+                tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) 
+            }, 
+            banks: patternBanks 
+        });
         const blob = new Blob([data], { type: "application/json" }), a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "pigeon_set.json"; a.click();
     });
     document.getElementById("importButton").addEventListener("click", () => document.getElementById("importFileInput").click());
@@ -221,11 +237,20 @@ function setupPads() {
         pad.addEventListener("click", () => {
             const b = pad.dataset.bank, i = parseInt(pad.dataset.idx);
             if (isSaveMode) {
-                patternBanks[b][i] = { settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) };
+                patternBanks[b][i] = { 
+                    settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, 
+                    fx: { 
+                        delay: { time: fxNodes.delay.node.delayTime.value, feedback: fxNodes.delay.feedback.gain.value }, 
+                        reverb: { mix: fxNodes.reverb.mix.gain.value }, 
+                        vibrato: { rate: fxNodes.vibrato.lfo.frequency.value, depth: fxNodes.vibrato.depthNode.gain.value }, 
+                        matrix: tracks.map((_, trackIdx) => ({ delay: trackSends[trackIdx].delay.gain.value > 0, reverb: trackSends[trackIdx].reverb.gain.value > 0, vibrato: trackSends[trackIdx].vibrato.gain.value > 0 })) 
+                    },
+                    tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) 
+                };
                 localStorage.setItem("pigeonBanks", JSON.stringify(patternBanks)); isSaveMode = false; document.getElementById("saveModeBtn").classList.remove("active"); updatePadUI(patternBanks);
             } else if (patternBanks[b] && patternBanks[b][i]) {
-                if (isPlaying) { queuedPattern = { data: patternBanks[b][i], pad: pad }; document.querySelectorAll(".pad").forEach(p => p.classList.remove("queued")); pad.classList.add("queued"); }
-                else { loadPatternData(patternBanks[b][i]); document.querySelectorAll(".pad").forEach(p => p.classList.remove("active")); pad.classList.add("active"); }
+                if (isPlaying) { queuedPattern = { data: patternBanks[b][i], pad: pad }; document.querySelectorAll(".queued").forEach(p => p.classList.remove("queued")); pad.classList.add("queued"); }
+                else { loadPatternData(patternBanks[b][i]); document.querySelectorAll(".active").forEach(p => p.classList.remove("active")); pad.classList.add("active"); }
             }
         });
     });
@@ -236,9 +261,9 @@ function setupTracePad() {
     tracePad.addEventListener("mousedown", e => {
         e.preventDefault(); if (!isPlaying) return; initAudio(tracks, updateRoutingFromUI); isTracing = true; const pos = getPadPos(e); traceCurrentY = pos.y;
         isEffectMode = document.querySelectorAll('.fx-xy-link.active').length > 0;
-        if (!isEffectMode) { const elapsed = audioCtx.currentTime - playbackStartTime, currentX = (elapsed / playbackDuration) * 750; traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; tracks[currentTargetTrack].segments.push(traceCurrentSeg); startLiveSynth(tracks[currentTargetTrack], traceCurrentY); }
+        if (!isEffectMode) { const elapsed = audioCtx.currentTime - playbackStartTime, currentX = (elapsed / playbackDuration) * 750; let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; } traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; tracks[currentTargetTrack].segments.push(traceCurrentSeg); if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else startLiveSynth(tracks[currentTargetTrack], traceCurrentY); }
     });
-    tracePad.addEventListener("mousemove", e => { if (isTracing) { const pos = getPadPos(e); traceCurrentY = pos.y; if (!isEffectMode) updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); } });
+    tracePad.addEventListener("mousemove", e => { if (isTracing) { const pos = getPadPos(e); traceCurrentY = pos.y; if (!isEffectMode) { if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); } } });
     window.addEventListener("mouseup", () => { if (isTracing) { if (!isEffectMode) stopLiveSynth(); isTracing = false; redrawTrack(tracks[currentTargetTrack], undefined, brushSelect.value, chordIntervals, chordColors); } });
     document.querySelectorAll(".picker-btn").forEach(btn => btn.addEventListener("click", () => { document.querySelectorAll(".picker-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); currentTargetTrack = parseInt(btn.dataset.target); }));
 }
@@ -261,7 +286,7 @@ function updateRoutingFromUI() {
     document.querySelectorAll('.fx-unit').forEach(unit => {
         const title = unit.querySelector('.fx-header').innerText, fxName = title.includes("DELAY") ? "delay" : title.includes("REVERB") ? "reverb" : "vibrato";
         unit.querySelectorAll('.matrix-btn').forEach((btn, idx) => { const active = btn.classList.contains('active'); trackSends[idx][fxName].gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.05); });
-        unit.querySelector('.led').classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
+        unit.querySelector('.led')?.classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
     });
 }
 
@@ -272,7 +297,7 @@ function loop() {
         if (document.getElementById("loopCheckbox").checked) { playbackStartTime = audioCtx.currentTime; scheduleTracks(playbackStartTime); elapsed = 0; if (isTracing && traceCurrentSeg) { undoStack.push({ trackIdx: currentTargetTrack }); traceCurrentSeg = { points: [], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; tracks[currentTargetTrack].segments.push(traceCurrentSeg); } }
         else { isPlaying = false; return; }
     }
-    const x = (elapsed / playbackDuration) * 750; if (isTracing && traceCurrentSeg) { traceCurrentSeg.points.push({ x, y: traceCurrentY }); }
+    const x = (elapsed / playbackDuration) * 750; if (isTracing && traceCurrentSeg) { let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; } traceCurrentSeg.points.push({ x, y: traceCurrentY, jX, jY }); }
     tracks.forEach(t => redrawTrack(t, x, brushSelect.value, chordIntervals, chordColors)); 
     const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray);
     let avg = dataArray.reduce((a, b) => a + b) / dataArray.length; let d = avg - lastAvg; lastAvg = avg;
