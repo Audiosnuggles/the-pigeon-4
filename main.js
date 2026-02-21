@@ -39,7 +39,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupPads();
     setupTracePad();
     resetFXUI(updateRoutingFromUI);
-    // Init Eraser CSS
     document.body.classList.toggle("eraser-mode", toolSelect.value === "erase");
 });
 
@@ -50,13 +49,11 @@ function getPos(e, c) {
     return { x: (cx - r.left) * (c.width / r.width), y: (cy - r.top) * (c.height / r.height) };
 }
 
-// Speichert einen vollständigen Klon aller Linien aller Tracks
 function saveState() {
     undoStack.push(JSON.stringify(tracks.map(t => t.segments)));
-    if (undoStack.length > 25) undoStack.shift(); // Max 25 Schritte Undo
+    if (undoStack.length > 25) undoStack.shift(); 
 }
 
-// UI-Ausleser für das FX Routing
 function getKnobVal(paramName) {
     let val = 0;
     document.querySelectorAll('.knob').forEach(k => {
@@ -107,9 +104,16 @@ function applyAllFXFromUI() {
 
 function loadInitialData() {
     const saved = localStorage.getItem("pigeonBanks");
-    if (saved) { try { patternBanks = JSON.parse(saved); updatePadUI(patternBanks); } catch(e) {} }
+    let hasLocalBanks = false;
+    if (saved) { 
+        try { 
+            patternBanks = JSON.parse(saved); 
+            updatePadUI(patternBanks); 
+            hasLocalBanks = true; 
+        } catch(e) {} 
+    }
     fetch('default_set.json').then(res => res.json()).then(data => {
-        if (data.banks) { patternBanks = data.banks; updatePadUI(patternBanks); }
+        if (!hasLocalBanks && data.banks) { patternBanks = data.banks; updatePadUI(patternBanks); }
         if (data.current) loadPatternData(data.current);
     }).catch(() => console.log("Default-Set nicht gefunden."));
 }
@@ -124,14 +128,22 @@ function loadPatternData(d) {
         playbackDuration = (60 / (parseFloat(d.settings.bpm) || 120)) * 32;
     }
     
-    // UI-First FX Routing
     if (d.fx) {
         if (d.fx.matrix) {
             const units = document.querySelectorAll('.fx-unit');
             d.fx.matrix.forEach((m, i) => {
-                if(units[0]) units[0].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.delay);
-                if(units[1]) units[1].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.reverb);
-                if(units[2]) units[2].querySelectorAll('.matrix-btn')[i].classList.toggle('active', m.vibrato);
+                const setBtn = (fxIdx, isActive) => {
+                    if (units[fxIdx]) {
+                        const btn = units[fxIdx].querySelectorAll('.matrix-btn')[i];
+                        if (btn) {
+                            if (isActive) btn.classList.add('active');
+                            else btn.classList.remove('active');
+                        }
+                    }
+                };
+                setBtn(0, m.delay);
+                setBtn(1, m.reverb);
+                setBtn(2, m.vibrato);
             });
         }
         
@@ -263,7 +275,7 @@ function setupDrawing(track) {
         initAudio(tracks, updateRoutingFromUI); 
         if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
         
-        saveState(); // SICHERUNG FÜR UNDO ERSTELLEN
+        saveState(); 
 
         const pos = getPos(e, track.canvas); 
         const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
@@ -276,7 +288,7 @@ function setupDrawing(track) {
             redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
             if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
         } else {
-            erase(track, pos.x, pos.y); // Bypass Snap beim Radieren!
+            erase(track, pos.x, pos.y); 
         }
     };
 
@@ -291,7 +303,7 @@ function setupDrawing(track) {
             redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
             if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else updateLiveSynth(track, pos.y);
         } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) {
-            erase(track, pos.x, pos.y); // Bypass Snap beim Radieren!
+            erase(track, pos.x, pos.y); 
         }
     };
 
@@ -325,6 +337,97 @@ function erase(t, x, y) {
 }
 
 function setupMainControls() {
+
+    // --- Aufnahme-Logik (Live REC Button) ---
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    const recBtn = document.getElementById("recButton");
+    
+    if (recBtn) {
+        recBtn.addEventListener("click", () => {
+            if (!audioCtx) initAudio(tracks, updateRoutingFromUI);
+            if (audioCtx.state === "suspended") audioCtx.resume();
+
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                recBtn.innerText = "⏺ Rec";
+                recBtn.style.color = ""; 
+            } else {
+                const dest = audioCtx.createMediaStreamDestination();
+                masterGain.connect(dest);
+                mediaRecorder = new MediaRecorder(dest.stream);
+                recordedChunks = [];
+
+                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: "audio/webm" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "pigeon_live_recording.webm";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    masterGain.disconnect(dest);
+                };
+
+                mediaRecorder.start();
+                recBtn.innerText = "⏹ Stop Rec";
+                recBtn.style.color = "#ff4444";
+            }
+        });
+    }
+
+    // --- Export Loop (WAV) Logik ---
+    const exportWavBtn = document.getElementById("exportWavButton");
+    exportWavBtn.addEventListener("click", () => {
+        if (!audioCtx) initAudio(tracks, updateRoutingFromUI);
+        if (audioCtx.state === "suspended") audioCtx.resume();
+
+        exportWavBtn.innerText = "⏳ Exporting...";
+        exportWavBtn.disabled = true;
+
+        const wasPlaying = isPlaying;
+        if (isPlaying) document.getElementById("stopButton").click();
+
+        const dest = audioCtx.createMediaStreamDestination();
+        masterGain.connect(dest);
+        const loopRec = new MediaRecorder(dest.stream);
+        const chunks = [];
+
+        loopRec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        loopRec.onstop = () => {
+            const blob = new Blob(chunks, { type: "audio/webm" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "pigeon_loop.webm";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            exportWavBtn.innerText = "Export WAV";
+            exportWavBtn.disabled = false;
+            masterGain.disconnect(dest);
+            
+            if (wasPlaying) document.getElementById("playButton").click();
+        };
+
+        loopRec.start();
+        const bpm = parseFloat(document.getElementById("bpmInput").value) || 120;
+        const loopDur = (60 / bpm) * 32;
+        
+        scheduleTracks(audioCtx.currentTime, audioCtx, masterGain);
+        
+        setTimeout(() => {
+            loopRec.stop();
+        }, (loopDur * 1000) + 500); 
+    });
+
+
+    // --- Restliche Buttons ---
     document.getElementById("playButton").addEventListener("click", () => {
         if (isPlaying) return; 
         initAudio(tracks, updateRoutingFromUI); 
@@ -342,7 +445,6 @@ function setupMainControls() {
     
     document.getElementById("fullscreenBtn")?.addEventListener("click", () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); });
     
-    // ROBUSTES GLOBAL UNDO!
     document.getElementById("undoButton").addEventListener("click", () => { 
         if (undoStack.length > 0) { 
             const stateStr = undoStack.pop(); 
@@ -427,7 +529,7 @@ function setupTracePad() {
     tracePad.addEventListener("mousedown", e => {
         e.preventDefault(); if (!isPlaying) return; initAudio(tracks, updateRoutingFromUI); isTracing = true; const pos = getPadPos(e); traceCurrentY = pos.y;
         
-        saveState(); // SICHERUNG FÜR UNDO
+        saveState(); 
         
         isEffectMode = document.querySelectorAll('.fx-xy-link.active').length > 0;
         if (!isEffectMode) { const elapsed = audioCtx.currentTime - playbackStartTime, currentX = (elapsed / playbackDuration) * 750; let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; } traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; tracks[currentTargetTrack].segments.push(traceCurrentSeg); if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else startLiveSynth(tracks[currentTargetTrack], traceCurrentY); }
@@ -481,7 +583,7 @@ function loop() {
         if (document.getElementById("loopCheckbox").checked) { 
             playbackStartTime = audioCtx.currentTime; scheduleTracks(playbackStartTime); elapsed = 0; 
             if (isTracing && traceCurrentSeg) { 
-                saveState(); // SICHERUNG FÜR LOOPING TRACE-PAD
+                saveState(); 
                 traceCurrentSeg = { points: [], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; 
                 tracks[currentTargetTrack].segments.push(traceCurrentSeg); 
             } 
