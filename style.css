@@ -194,3 +194,19 @@ body.eraser-mode #custom-eraser { display: block; }
 .knob { width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 2px solid #ddd; position: relative; cursor: ns-resize; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 .knob .tick { position: absolute; top: 2px; left: 9px; width: 2px; height: 6px; background: #666; border-radius: 1px; }
 .knob-group span { font-family: inherit; font-size: 8px; font-weight: 600; color: #777; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* =========================================
+   TRACE PAD CROSSHAIR
+   ========================================= */
+#trace-crosshair {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; display: none; z-index: 10;
+}
+.ch-h { 
+  position: absolute; left: 0; width: 100%; height: 1px; 
+  background: rgba(255, 68, 68, 0.8); box-shadow: 0 0 4px rgba(255,0,0,0.5); 
+}
+.ch-v { 
+  position: absolute; top: 0; height: 100%; width: 1px; 
+  background: rgba(255, 68, 68, 0.8); box-shadow: 0 0 4px rgba(255,0,0,0.5); 
+}

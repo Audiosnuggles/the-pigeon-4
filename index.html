@@ -46,9 +46,16 @@
 
         <div class="help-section">
           <h3>3. Global Controls & Tools</h3>
-          <p><strong>Sync & Tempo:</strong> Use <strong>EXT SYNC</strong> to lock The Pigeon to an external MIDI Clock (e.g., Ableton). Or set the <strong>BPM</strong> manually.</p>
+          <p><strong>Sync & Tempo:</strong> Use <strong>EXT SYNC</strong> to lock The Pigeon to an external MIDI Clock (e.g., Ableton). Select your device from the dropdown.</p>
           <p><strong>Loop & Harmonize:</strong> Check <strong>Loop</strong> for infinite playback. <strong>Harmonize</strong> forces your drawn frequencies into a perfect musical <strong>Scale</strong> (Major, Minor, Pentatonic).</p>
           <p><strong>Tool & Brush:</strong> Switch between <strong>Draw</strong> and <strong>Eraser</strong>. The <strong>Brush</strong> dropdown offers wild textures (Standard, Particles, Fractal, or Chords). Adjust the stroke with the <strong>Size</strong> slider.</p>
+        </div>
+
+        <div class="help-section">
+          <h3>🔌 Studio Sync (Ableton Live)</h3>
+          <p><strong>1. Virtual Cable:</strong> Aktiviere den <em>IAC-Treiber</em> (Mac) im Audio-MIDI-Setup oder installiere <em>loopMIDI</em> (Windows).</p>
+          <p><strong>2. DAW Setup:</strong> Aktiviere in den Ableton MIDI-Einstellungen den <strong>Sync</strong>-Output für dieses virtuelle Kabel.</p>
+          <p><strong>3. The Pigeon:</strong> Klicke auf <strong>EXT SYNC</strong>. Sobald du in Ableton auf Play drückst, läuft The Pigeon phasengenau als Slave mit!</p>
         </div>
 
         <div class="help-section">
@@ -148,6 +155,10 @@
       
       <div id="trace-pad">
         <span class="pad-hint">POKE<br>ME</span>
+        <div id="trace-crosshair">
+            <div class="ch-h"></div>
+            <div class="ch-v"></div>
+        </div>
       </div>
 
       <div id="fx-rack">
@@ -248,6 +259,8 @@
       <div class="controls-left">
         <div class="control-row">
           <button id="extSyncBtn">EXT SYNC</button>
+          <select id="midiInputSelect" disabled style="max-width: 140px; padding: 3px; font-size: 11px; border: 1px solid #999; border-radius: 3px; background: #eee; cursor: pointer;"></select>
+          
           <label>Tempo: <input type="number" id="bpmInput" value="120" min="30" max="300"></label>
           <label>Loop: <input type="checkbox" id="loopCheckbox" checked></label>
           <label>Harmonize: <input type="checkbox" id="harmonizeCheckbox"></label>

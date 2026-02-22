@@ -5,11 +5,27 @@ import {
     updateReverbDecay
 } from './audio.js';
 import { setupKnob, updatePadUI, resetFXUI } from './ui.js';
+import { initMidiEngine } from './midi.js';
 
 let patternBanks = { A: [null, null, null, null], B: [null, null, null, null], C: [null, null, null, null] };
-let isPlaying = false, isSaveMode = false, playbackStartTime = 0, playbackDuration = 0, animationFrameId;
+let isPlaying = false, isSaveMode = false, playbackStartTime = 0, playbackDuration = 0;
 let undoStack = [], liveNodes = [], liveGainNode = null, activeNodes = [], lastAvg = 0;
 let currentTargetTrack = 0, traceCurrentY = 50, isTracing = false, isEffectMode = false, traceCurrentSeg = null, queuedPattern = null;
+
+// --- Web Worker für Background-Audio (Energiespar-Fix) ---
+const workerCode = `
+  let timerID = null;
+  self.onmessage = function(e) {
+    if (e.data === 'start') {
+      if (!timerID) timerID = setInterval(() => postMessage('tick'), 16);
+    } else if (e.data === 'stop') {
+      clearInterval(timerID); timerID = null;
+    }
+  };
+`;
+const timerWorker = new Worker(URL.createObjectURL(new Blob([workerCode], {type: 'application/javascript'})));
+timerWorker.onmessage = () => { if (isPlaying) loop(); };
+// ---------------------------------------------------------
 
 const chordIntervals = { major: [0, 4, 7], minor: [0, 3, 7], diminished: [0, 3, 6], augmented: [0, 4, 8], sus2: [0, 2, 7], sus4: [0, 5, 7] };
 const chordColors = ['#FF5733', '#33FF57', '#3357FF'];
@@ -174,7 +190,6 @@ function applyAllFXFromUI() {
     updateRoutingFromUI();
 }
 
-// FIX: Auto-Load des ersten verfuegbaren Pads beim Start
 function loadInitialData() {
     const saved = localStorage.getItem("pigeonBanks");
     let loadedFromSave = false;
@@ -423,83 +438,6 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
         });
     });
 }
-
-function setupDrawing(track) {
-    let drawing = false;
-    const start = e => {
-        e.preventDefault(); 
-        initAudio(tracks, updateRoutingFromUI); 
-        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-        saveState(); 
-        const pos = getPos(e, track.canvas); 
-        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
-        
-        if (toolSelect.value === "draw") {
-            drawing = true; 
-            let jX = 0, jY = 0; 
-            if (brushSelect.value === "fractal") { 
-                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
-                jX = (Math.random() * 40 - 20) * (chaos * 2); 
-                jY = (Math.random() * 80 - 40) * (chaos * 2); 
-            }
-            track.curSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
-            track.segments.push(track.curSeg); 
-            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
-        } else {
-            erase(track, pos.x, pos.y); 
-        }
-    };
-
-    const move = e => {
-        if (!drawing && toolSelect.value !== "erase") return; 
-        const pos = getPos(e, track.canvas); 
-        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
-        
-        if (drawing && track.curSeg) {
-            let jX = 0, jY = 0; 
-            if (brushSelect.value === "fractal") { 
-                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
-                jX = (Math.random() * 40 - 20) * (chaos * 2); 
-                jY = (Math.random() * 80 - 40) * (chaos * 2); 
-            }
-            track.curSeg.points.push({ x, y: pos.y, jX, jY }); 
-            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else updateLiveSynth(track, pos.y);
-        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) {
-            erase(track, pos.x, pos.y); 
-        }
-    };
-
-    const stop = () => { 
-        if (drawing) { 
-            if (track.curSeg && track.curSeg.points.length === 1) {
-                track.curSeg.points.push({
-                    x: track.curSeg.points[0].x + 0.5, y: track.curSeg.points[0].y, 
-                    jX: track.curSeg.points[0].jX, jY: track.curSeg.points[0].jY
-                });
-            }
-            drawing = false; 
-            track.curSeg = null; 
-            stopLiveSynth(); 
-            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors); 
-        } 
-    };
-
-    track.canvas.addEventListener("mousedown", start); 
-    track.canvas.addEventListener("mousemove", move); 
-    window.addEventListener("mouseup", stop); 
-    track.canvas.addEventListener("mouseleave", stop);
-    track.canvas.addEventListener("touchstart", start, {passive:false}); 
-    track.canvas.addEventListener("touchmove", move, {passive:false}); 
-    track.canvas.addEventListener("touchend", stop);
-}
-
-function erase(t, x, y) { 
-    t.segments = t.segments.filter(s => !s.points.some(p => Math.hypot(p.x - x, p.y - y) < 20)); 
-    redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); 
-}
-
 function setupMainControls() {
     // --- HELP OVERLAY LOGIK ---
     const helpBtn = document.getElementById("helpBtn");
@@ -511,55 +449,28 @@ function setupMainControls() {
         closeHelpBtn.addEventListener("click", () => helpOverlay.style.display = "none");
         helpOverlay.addEventListener("click", (e) => { if(e.target === helpOverlay) helpOverlay.style.display = "none"; });
     }
-    // --------------------------
 
-    let extSyncActive = false;
-    let midiAccess = null;
-    let clockCount = 0;
-    let lastClockTime = 0;
-
-    const extSyncBtn = document.getElementById("extSyncBtn");
-    const bpmInput = document.getElementById("bpmInput");
-    
-    if (extSyncBtn) {
-        extSyncBtn.addEventListener("click", () => {
-            extSyncActive = !extSyncActive;
-            extSyncBtn.classList.toggle("active", extSyncActive);
-            bpmInput.disabled = extSyncActive;
-            
-            if (extSyncActive && navigator.requestMIDIAccess) {
-                navigator.requestMIDIAccess().then(access => {
-                    midiAccess = access;
-                    for (let input of midiAccess.inputs.values()) input.onmidimessage = handleMIDIMessage;
-                    midiAccess.onstatechange = (e) => { if(e.port.type === 'input' && e.port.state === 'connected') e.port.onmidimessage = handleMIDIMessage; };
-                }).catch(err => console.error("Web MIDI API blockiert.", err));
+    // --- MIDI ENGINE INITIALISIEREN ---
+    initMidiEngine("extSyncBtn", "midiInputSelect", {
+        onToggle: (active) => {
+            const bpmInput = document.getElementById("bpmInput");
+            if (bpmInput) bpmInput.disabled = active;
+        },
+        onBpm: (bpm) => {
+            const bpmInput = document.getElementById("bpmInput");
+            if(Math.abs(bpmInput.value - bpm) > 0.1) {
+                bpmInput.value = bpm;
+                playbackDuration = (60 / bpm) * 32;
             }
-        });
-    }
-
-    function handleMIDIMessage(message) {
-        if (!extSyncActive) return;
-        const status = message.data[0];
-        
-        if (status === 248) { 
-            clockCount++;
-            if (clockCount === 24) {
-                const now = performance.now();
-                if (lastClockTime > 0) {
-                    const beatMs = now - lastClockTime;
-                    const calcBPM = Math.round(60000 / beatMs);
-                    if(calcBPM > 40 && calcBPM < 300) {
-                        bpmInput.value = calcBPM;
-                        playbackDuration = (60 / calcBPM) * 32;
-                    }
-                }
-                lastClockTime = now;
-                clockCount = 0;
-            }
-        } 
-        else if (status === 250 || status === 251) { clockCount = 0; if (!isPlaying) document.getElementById("playButton").click(); } 
-        else if (status === 252) { if (isPlaying) document.getElementById("stopButton").click(); }
-    }
+        },
+        onStart: () => {
+            if (!isPlaying) document.getElementById("playButton").click();
+        },
+        onStop: () => {
+            if (isPlaying) document.getElementById("stopButton").click();
+        }
+    });
+    // ----------------------------------
 
     let mediaRecorder = null;
     let recordedChunks = [];
@@ -694,11 +605,21 @@ function setupMainControls() {
         applyAllFXFromUI(); 
         if (audioCtx.state === "suspended") audioCtx.resume();
         playbackDuration = (60 / (parseFloat(document.getElementById("bpmInput").value) || 120)) * 32;
-        playbackStartTime = audioCtx.currentTime + 0.1; isPlaying = true; scheduleTracks(playbackStartTime); loop();
+        playbackStartTime = audioCtx.currentTime + 0.1; 
+        isPlaying = true; 
+        scheduleTracks(playbackStartTime); 
+        
+        // Starte den Web Worker (Background Tab Support) anstelle von requestAnimationFrame
+        timerWorker.postMessage('start');
     });
     
     document.getElementById("stopButton").addEventListener("click", () => {
-        isPlaying = false; cancelAnimationFrame(animationFrameId); activeNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch (e) { } });
+        isPlaying = false; 
+        
+        // Stoppe den Web Worker
+        timerWorker.postMessage('stop');
+        
+        activeNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch (e) { } });
         activeNodes = []; tracks.forEach(t => { if(t.gainNode) t.gainNode.disconnect(); redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); });
         pigeonImg.style.transform = "scale(1)"; document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued"));
     });
@@ -769,6 +690,82 @@ function setupMainControls() {
     });
 }
 
+function setupDrawing(track) {
+    let drawing = false;
+    const start = e => {
+        e.preventDefault(); 
+        initAudio(tracks, updateRoutingFromUI); 
+        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+        saveState(); 
+        const pos = getPos(e, track.canvas); 
+        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
+        
+        if (toolSelect.value === "draw") {
+            drawing = true; 
+            let jX = 0, jY = 0; 
+            if (brushSelect.value === "fractal") { 
+                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
+                jX = (Math.random() * 40 - 20) * (chaos * 2); 
+                jY = (Math.random() * 80 - 40) * (chaos * 2); 
+            }
+            track.curSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
+            track.segments.push(track.curSeg); 
+            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
+            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
+        } else {
+            erase(track, pos.x, pos.y); 
+        }
+    };
+
+    const move = e => {
+        if (!drawing && toolSelect.value !== "erase") return; 
+        const pos = getPos(e, track.canvas); 
+        const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
+        
+        if (drawing && track.curSeg) {
+            let jX = 0, jY = 0; 
+            if (brushSelect.value === "fractal") { 
+                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
+                jX = (Math.random() * 40 - 20) * (chaos * 2); 
+                jY = (Math.random() * 80 - 40) * (chaos * 2); 
+            }
+            track.curSeg.points.push({ x, y: pos.y, jX, jY }); 
+            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
+            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else updateLiveSynth(track, pos.y);
+        } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) {
+            erase(track, pos.x, pos.y); 
+        }
+    };
+
+    const stop = () => { 
+        if (drawing) { 
+            if (track.curSeg && track.curSeg.points.length === 1) {
+                track.curSeg.points.push({
+                    x: track.curSeg.points[0].x + 0.5, y: track.curSeg.points[0].y, 
+                    jX: track.curSeg.points[0].jX, jY: track.curSeg.points[0].jY
+                });
+            }
+            drawing = false; 
+            track.curSeg = null; 
+            stopLiveSynth(); 
+            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors); 
+        } 
+    };
+
+    track.canvas.addEventListener("mousedown", start); 
+    track.canvas.addEventListener("mousemove", move); 
+    window.addEventListener("mouseup", stop); 
+    track.canvas.addEventListener("mouseleave", stop);
+    track.canvas.addEventListener("touchstart", start, {passive:false}); 
+    track.canvas.addEventListener("touchmove", move, {passive:false}); 
+    track.canvas.addEventListener("touchend", stop);
+}
+
+function erase(t, x, y) { 
+    t.segments = t.segments.filter(s => !s.points.some(p => Math.hypot(p.x - x, p.y - y) < 20)); 
+    redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); 
+}
+
 function setupPads() {
     document.getElementById("saveModeBtn").addEventListener("click", (e) => { isSaveMode = !isSaveMode; e.target.classList.toggle("active", isSaveMode); });
     document.querySelectorAll(".pad").forEach(pad => {
@@ -822,13 +819,34 @@ function getLinkedFX() {
 }
 
 function setupTracePad() {
-    const getPadPos = (e) => { const r = tracePad.getBoundingClientRect(), cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY; return { x: (cx - r.left) * (750 / r.width), y: (cy - r.top) * (100 / r.height) }; };
+    const crosshair = document.getElementById("trace-crosshair");
+    const chH = crosshair ? crosshair.querySelector(".ch-h") : null;
+    const chV = crosshair ? crosshair.querySelector(".ch-v") : null;
+
+    const getPadPos = (e) => { 
+        const r = tracePad.getBoundingClientRect(); 
+        const cx = e.touches ? e.touches[0].clientX : e.clientX; 
+        const cy = e.touches ? e.touches[0].clientY : e.clientY; 
+        
+        if (chH && chV) {
+            const visualX = cx - r.left;
+            const visualY = cy - r.top;
+            if (visualX >= 0 && visualX <= r.width && visualY >= 0 && visualY <= r.height) {
+                chV.style.left = visualX + "px";
+                chH.style.top = visualY + "px";
+            }
+        }
+        
+        return { x: (cx - r.left) * (750 / r.width), y: (cy - r.top) * (100 / r.height) }; 
+    };
     
+    tracePad.addEventListener("mouseenter", () => { if(crosshair) crosshair.style.display = "block"; });
+    tracePad.addEventListener("mouseleave", () => { if(crosshair) crosshair.style.display = "none"; });
+
     tracePad.addEventListener("mousedown", e => {
         e.preventDefault(); if (!isPlaying) return; initAudio(tracks, updateRoutingFromUI); isTracing = true; const pos = getPadPos(e); traceCurrentY = pos.y;
         
         saveState(); 
-        
         isEffectMode = document.querySelectorAll('.fx-xy-link.active').length > 0;
         
         if (!isEffectMode) { 
@@ -849,6 +867,7 @@ function setupTracePad() {
     });
     
     tracePad.addEventListener("mousemove", e => { 
+        if(crosshair && !e.touches) getPadPos(e); 
         if (isTracing) { 
             const pos = getPadPos(e); 
             traceCurrentY = pos.y; 
@@ -867,6 +886,9 @@ function setupTracePad() {
         } 
     });
     
+    tracePad.addEventListener("touchstart", (e) => { if(crosshair) crosshair.style.display = "block"; }, {passive: false});
+    tracePad.addEventListener("touchend", (e) => { if(crosshair) crosshair.style.display = "none"; });
+
     document.querySelectorAll(".picker-btn").forEach(btn => btn.addEventListener("click", () => { document.querySelectorAll(".picker-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); currentTargetTrack = parseInt(btn.dataset.target); }));
     
     document.getElementById("traceClearBtn").addEventListener("click", () => { 
@@ -972,7 +994,8 @@ function updateRoutingFromUI() {
 }
 
 function loop() {
-    if (!isPlaying) return; let elapsed = audioCtx.currentTime - playbackStartTime;
+    if (!isPlaying) return; 
+    let elapsed = audioCtx.currentTime - playbackStartTime;
     if (elapsed >= playbackDuration) {
         if (queuedPattern) { loadPatternData(queuedPattern.data); document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued")); queuedPattern.pad.classList.add("active"); queuedPattern = null; }
         if (document.getElementById("loopCheckbox").checked) { 
@@ -1051,7 +1074,7 @@ function loop() {
     tracks.forEach(t => redrawTrack(t, x, brushSelect.value, chordIntervals, chordColors)); 
     const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray);
     let avg = dataArray.reduce((a, b) => a + b) / dataArray.length; let d = avg - lastAvg; lastAvg = avg;
-    pigeonImg.style.transform = `scale(${1 + Math.min(0.2, d / 100)}, ${1 - Math.min(0.5, d / 50)})`; animationFrameId = requestAnimationFrame(loop);
+    pigeonImg.style.transform = `scale(${1 + Math.min(0.2, d / 100)}, ${1 - Math.min(0.5, d / 50)})`; 
 }
 
 function setupTrackControls(t) {
@@ -1080,12 +1103,8 @@ function setupTrackControls(t) {
     if(snapBox) snapBox.addEventListener("change", e => t.snap = e.target.checked);
 }
 
-// Helfer-Funktion für die Titel-Farben
 function colorizeTitle() {
     const h1 = document.querySelector('h1');
     if (!h1) return;
-    // Zerlegt den Text in Buchstaben und packt jeden (außer Leerzeichen) in ein <span>
-    h1.innerHTML = h1.textContent.split('').map(char => 
-        char.trim() ? `<span>${char}</span>` : char
-    ).join('');
+    h1.innerHTML = h1.textContent.split('').map(char => char.trim() ? `<span>${char}</span>` : char).join('');
 }

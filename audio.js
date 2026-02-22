@@ -62,8 +62,8 @@ export function initAudio(tracks, updateRoutingCallback) {
 
     // 4. FILTER (Warmer Moog-Style: 24dB Ladder + Soft Saturation)
     fxNodes.filter.input = audioCtx.createGain();
-    fxNodes.filter.node1 = audioCtx.createBiquadFilter(); // Filter 1 (12dB)
-    fxNodes.filter.node2 = audioCtx.createBiquadFilter(); // Filter 2 (12dB) = Total 24dB
+    fxNodes.filter.node1 = audioCtx.createBiquadFilter(); 
+    fxNodes.filter.node2 = audioCtx.createBiquadFilter(); 
     fxNodes.filter.drive = audioCtx.createWaveShaper();
     
     fxNodes.filter.node1.type = 'lowpass';
@@ -76,7 +76,6 @@ export function initAudio(tracks, updateRoutingCallback) {
     fxNodes.filter.drive.curve = getWarmDistortionCurve(0);
     fxNodes.filter.drive.oversample = '4x';
     
-    // Signal Flow: Input -> Soft Drive -> Filter 1 -> Filter 2 -> Output
     fxNodes.filter.input.connect(fxNodes.filter.drive);
     fxNodes.filter.drive.connect(fxNodes.filter.node1);
     fxNodes.filter.node1.connect(fxNodes.filter.node2);
@@ -105,7 +104,6 @@ export function initAudio(tracks, updateRoutingCallback) {
     fxNodes.stutter.input.connect(fxNodes.stutter.gate);
     fxNodes.stutter.gate.connect(masterGain); 
 
-    // Setup Routing Matrix
     tracks.forEach((t, i) => {
         trackSends[i] = {
             dry: audioCtx.createGain(),
@@ -163,7 +161,6 @@ export function updateTrackVolume(track) {
     }
 }
 
-// Harte Distortion (für Fractal Synth)
 export function getDistortionCurve(amount = 50) {
     const k = typeof amount === 'number' ? amount : 50;
     const n_samples = 44100;
@@ -176,7 +173,6 @@ export function getDistortionCurve(amount = 50) {
     return curve;
 }
 
-// NEU: Warme Sättigung (Tape-Style für den Filter)
 export function getWarmDistortionCurve(amount = 0) {
     const k = amount / 10; 
     const n_samples = 44100;
@@ -188,31 +184,33 @@ export function getWarmDistortionCurve(amount = 0) {
     return curve;
 }
 
+// FIX: Exakt die gleiche Lineare Berechnung wie in The Pigeon 3
 export function mapYToFrequency(y, height) {
-    const minFreq = 80;
-    const maxFreq = 1000;
-    return maxFreq * Math.pow(minFreq / maxFreq, y / height);
+    return Math.max(20, Math.min(1000 - (y / height) * 920, 20000));
 }
 
+// FIX: Exakt die gleiche Quantisierungs-Logik und Moll-Pentatonik wie in The Pigeon 3
 export function quantizeFrequency(freq, scale) {
     const scales = {
         major: [0, 2, 4, 5, 7, 9, 11],
         minor: [0, 2, 3, 5, 7, 8, 10],
-        pentatonic: [0, 2, 4, 7, 9],
+        pentatonic: [0, 3, 5, 7, 10], // Zurück auf Pigeon 3 Minor Pentatonic!
         blues: [0, 3, 5, 6, 7, 10]
     };
     const activeScale = scales[scale] || scales.major;
-    const baseC = 65.41;
-    const semitonesFromC = 12 * Math.log2(freq / baseC);
-    const octave = Math.floor(semitonesFromC / 12);
-    const noteInOctave = semitonesFromC % 12;
     
-    let closestNote = activeScale[0];
-    let minDiff = 12;
-    activeScale.forEach(n => {
-        const diff = Math.abs(noteInOctave - n);
-        if (diff < minDiff) { minDiff = diff; closestNote = n; }
+    // Original Pigeon 3 A440 Logik
+    let m = Math.round(69 + 12 * Math.log2(freq / 440));
+    let mod = m % 12;
+    let b = activeScale[0];
+    let md = 99;
+    
+    activeScale.forEach(p => {
+        if (Math.abs(p - mod) < md) {
+            md = Math.abs(p - mod);
+            b = p;
+        }
     });
     
-    return baseC * Math.pow(2, octave + (closestNote / 12));
+    return 440 * Math.pow(2, (m - mod + b - 69) / 12);
 }
