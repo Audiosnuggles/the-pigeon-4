@@ -12,8 +12,9 @@ let isPlaying = false, isSaveMode = false, playbackStartTime = 0, playbackDurati
 let undoStack = [], liveNodes = [], liveGainNode = null, activeNodes = [], lastAvg = 0;
 let currentTargetTrack = 0, traceCurrentY = 50, isTracing = false, isEffectMode = false, traceCurrentSeg = null, queuedPattern = null;
 
-// NEU: Globale Liste, um die Fractal-Verzerrung in Echtzeit zu updaten
+// FIX: Globale Listen für Fractal Echtzeit-Update & Particle-Drosselung
 let activeWaveShapers = []; 
+let lastParticleTime = 0; 
 
 const workerCode = `
   let timerID = null;
@@ -295,7 +296,6 @@ function startLiveSynth(track, y) {
     liveNodes = []; liveGainNode = audioCtx.createGain(); liveGainNode.gain.setValueAtTime(0, audioCtx.currentTime);
     liveGainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.01);
     
-    // FIX 2: Konstantes Mapping auf 100 statt variabler Pixelhöhe
     let freq = mapYToFrequency(y, 100); 
     if (harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value);
     
@@ -309,7 +309,7 @@ function startLiveSynth(track, y) {
         
         if(brush === "fractal") { 
             const sh = audioCtx.createWaveShaper(); 
-            sh.curve = getDistortionCurve(fractalMorph * 100); 
+            sh.curve = getDistortionCurve(80 + (fractalMorph * 400)); 
             activeWaveShapers.push(sh); // Speichern für Live-Updates
             osc.connect(sh).connect(liveGainNode); 
         } else {
@@ -327,7 +327,6 @@ function startLiveSynth(track, y) {
 
 function updateLiveSynth(track, y) {
     if (!liveGainNode) return;
-    // FIX 2: Konstantes Mapping auf 100
     let freq = mapYToFrequency(y, 100); 
     if (harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value);
     liveNodes.forEach((n, i) => { const ivs = (brushSelect.value === "chord") ? chordIntervals[chordSelect.value] : [0]; n.frequency.setTargetAtTime(freq * Math.pow(2, (ivs[i] || 0) / 12), audioCtx.currentTime, 0.02); });
@@ -349,7 +348,6 @@ function stopLiveSynth() {
 function triggerParticleGrain(track, y) { 
     if(track.mute || track.vol < 0.01) return; 
     
-    // FIX 2: Konstantes Mapping auf 100 garantiert identischen Sound zum Loop
     let freq = mapYToFrequency(y, 100); 
     if(harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value); 
     
@@ -430,8 +428,8 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
                     g.gain.setValueAtTime(0, sT); g.gain.linearRampToValueAtTime(0.3, sT + 0.02); g.gain.setValueAtTime(0.3, eT); g.gain.linearRampToValueAtTime(0, eT + 0.1);
                     if (brush === "fractal") { 
                         const sh = targetCtx.createWaveShaper(); 
-                        sh.curve = getDistortionCurve(fractalMorph * 100); 
-                        if (targetCtx === audioCtx) activeWaveShapers.push(sh); // Speichern für Live-Updates
+                        sh.curve = getDistortionCurve(80 + (fractalMorph * 400)); 
+                        if (targetCtx === audioCtx) activeWaveShapers.push(sh); 
                         osc.connect(sh).connect(g); 
                     } else {
                         osc.connect(g);
@@ -448,8 +446,10 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
         });
     });
 }
+
 function setupDrawing(track) {
     let drawing = false;
+    
     const start = e => {
         e.preventDefault(); 
         initAudio(tracks, updateRoutingFromUI); 
@@ -460,16 +460,19 @@ function setupDrawing(track) {
         
         if (toolSelect.value === "draw") {
             drawing = true; 
-            let jX = 0, jY = 0; 
-            if (brushSelect.value === "fractal") { 
-                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
-                jX = (Math.random() * 40 - 20) * (chaos * 2); 
-                jY = (Math.random() * 80 - 40) * (chaos * 2); 
-            }
-            track.curSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
+            
+            const rX = Math.random() - 0.5;
+            const rY = Math.random() - 0.5;
+
+            track.curSeg = { points: [{ x, y: pos.y, rX, rY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
             track.segments.push(track.curSeg); 
             redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else startLiveSynth(track, pos.y);
+            
+            if (brushSelect.value === "particles") {
+                triggerParticleGrain(track, pos.y);
+            } else {
+                startLiveSynth(track, pos.y);
+            }
         } else {
             erase(track, pos.x, pos.y); 
         }
@@ -481,15 +484,24 @@ function setupDrawing(track) {
         const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
         
         if (drawing && track.curSeg) {
-            let jX = 0, jY = 0; 
-            if (brushSelect.value === "fractal") { 
-                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
-                jX = (Math.random() * 40 - 20) * (chaos * 2); 
-                jY = (Math.random() * 80 - 40) * (chaos * 2); 
+            const lastPt = track.curSeg.points[track.curSeg.points.length - 1];
+            const dist = Math.hypot(x - lastPt.x, pos.y - lastPt.y);
+            
+            // GARANTIE FÜR KONSISTENZ: Nur wenn wir uns 3 Pixel bewegt haben, 
+            // speichern wir einen Punkt UND triggern den Sound!
+            if (dist > 3) { 
+                const rX = Math.random() - 0.5;
+                const rY = Math.random() - 0.5;
+                
+                track.curSeg.points.push({ x, y: pos.y, rX, rY }); 
+                redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
+                
+                if (brushSelect.value === "particles") {
+                    triggerParticleGrain(track, pos.y);
+                } else {
+                    updateLiveSynth(track, pos.y);
+                }
             }
-            track.curSeg.points.push({ x, y: pos.y, jX, jY }); 
-            redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
-            if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else updateLiveSynth(track, pos.y);
         } else if (toolSelect.value === "erase" && (e.buttons === 1 || e.type === "touchmove")) {
             erase(track, pos.x, pos.y); 
         }
@@ -500,7 +512,7 @@ function setupDrawing(track) {
             if (track.curSeg && track.curSeg.points.length === 1) {
                 track.curSeg.points.push({
                     x: track.curSeg.points[0].x + 0.5, y: track.curSeg.points[0].y, 
-                    jX: track.curSeg.points[0].jX, jY: track.curSeg.points[0].jY
+                    rX: track.curSeg.points[0].rX, rY: track.curSeg.points[0].rY
                 });
             }
             drawing = false; 
@@ -560,7 +572,10 @@ function setupMainControls() {
                 playbackDuration = (60 / (parseFloat(document.getElementById("bpmInput").value) || 120)) * 32;
                 playbackStartTime = audioCtx.currentTime; 
                 isPlaying = true; 
+                
+                activeWaveShapers = []; // Liste beim Play-Start leeren!
                 scheduleTracks(playbackStartTime); 
+                
                 timerWorker.postMessage('start');
             }
         },
@@ -704,7 +719,10 @@ function setupMainControls() {
         playbackDuration = (60 / (parseFloat(document.getElementById("bpmInput").value) || 120)) * 32;
         playbackStartTime = audioCtx.currentTime + 0.05; 
         isPlaying = true; 
+        
+        activeWaveShapers = []; // Liste beim Play-Start leeren!
         scheduleTracks(playbackStartTime); 
+        
         timerWorker.postMessage('start');
     });
     
@@ -712,7 +730,9 @@ function setupMainControls() {
         isPlaying = false; 
         timerWorker.postMessage('stop');
         activeNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch (e) { } });
-        activeNodes = []; activeWaveShapers = []; tracks.forEach(t => { if(t.gainNode) t.gainNode.disconnect(); redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); });
+        activeNodes = []; 
+        activeWaveShapers = []; // Liste beim Stop leeren!
+        tracks.forEach(t => { if(t.gainNode) t.gainNode.disconnect(); redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors); });
         pigeonImg.style.transform = "scale(1)"; document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued"));
     });
     
@@ -868,13 +888,11 @@ function setupTracePad() {
         if (!isEffectMode) { 
             const elapsed = audioCtx.currentTime - playbackStartTime;
             const currentX = (elapsed / playbackDuration) * 750; 
-            let jX = 0, jY = 0; 
-            if (brushSelect.value === "fractal") { 
-                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
-                jX = (Math.random() * 40 - 20) * (chaos * 2); 
-                jY = (Math.random() * 80 - 40) * (chaos * 2); 
-            } 
-            traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; 
+            
+            const rX = Math.random() - 0.5;
+            const rY = Math.random() - 0.5;
+
+            traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY, rX, rY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; 
             tracks[currentTargetTrack].segments.push(traceCurrentSeg); 
             if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else startLiveSynth(tracks[currentTargetTrack], traceCurrentY); 
         } else {
@@ -888,8 +906,10 @@ function setupTracePad() {
             const pos = getPadPos(e); 
             traceCurrentY = pos.y; 
             if (!isEffectMode) { 
-                if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); 
-                else updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); 
+                // WICHTIG: Partikel werden hier NICHT mehr beim mousemove getriggert! Das passiert jetzt in der loop()
+                if (brushSelect.value !== "particles") {
+                    updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); 
+                }
             } 
         } 
     });
@@ -954,8 +974,8 @@ function setupFX() {
             }
             else if (title.includes("FRACTAL")) {
                 if (param === "MORPH") {
-                    // NEU: Live-Injektion der Verzerrung in alle aktiven WaveShaper
-                    const newCurve = getDistortionCurve(val * 100);
+                    // NEU: Fractal Range von 0 bis 400 skalieren
+                    const newCurve = getDistortionCurve(80 + (val * 400)); 
                     activeWaveShapers.forEach(sh => sh.curve = newCurve);
                 }
             }
@@ -1023,8 +1043,9 @@ function loop() {
         if (queuedPattern) { loadPatternData(queuedPattern.data); document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued")); queuedPattern.pad.classList.add("active"); queuedPattern = null; }
         if (document.getElementById("loopCheckbox").checked) { 
             
-            // DER DRIFT-FIX: Die neue Startzeit wird mathematisch berechnet, anstatt einfach die ungenaue Browserzeit zu nehmen!
+            // DER DRIFT-FIX & MEMORY LEAK FIX!
             playbackStartTime += playbackDuration; 
+            activeWaveShapers = []; // <-- WICHTIG: Liste leeren, sonst platzt der Speicher!
             scheduleTracks(playbackStartTime); 
             elapsed = audioCtx.currentTime - playbackStartTime; 
             
@@ -1038,15 +1059,16 @@ function loop() {
     }
     const x = (elapsed / playbackDuration) * 750; 
     
+    // In der loop() Funktion ersetzen:
     if (isTracing && !isEffectMode && traceCurrentSeg) { 
-        let jX = 0, jY = 0; 
-        if (brushSelect.value === "fractal") { 
-            const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
-            jX = (Math.random() * 40 - 20) * (chaos * 2); 
-            jY = (Math.random() * 80 - 40) * (chaos * 2); 
-        } 
-        traceCurrentSeg.points.push({ x, y: traceCurrentY, jX, jY }); 
-    }
+        const rX = Math.random() - 0.5;
+        const rY = Math.random() - 0.5;
+        traceCurrentSeg.points.push({ x, y: traceCurrentY, rX, rY }); 
+
+        // Sound wird im Tracepad ab sofort synchron zum Speichern getriggert!
+        if (brushSelect.value === "particles") {
+            triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY);
+        }
 
     if (isTracing && audioCtx && isEffectMode) {
         const linkedFX = getLinkedFX();
@@ -1094,8 +1116,8 @@ function loop() {
                         if(knobs[0]) { knobs[0].dataset.val = normX; knobs[0].style.transform = `rotate(${-135 + (normX * 270)}deg)`; }
                         if(knobs[1]) { 
                             knobs[1].dataset.val = normY; knobs[1].style.transform = `rotate(${-135 + (normY * 270)}deg)`; 
-                            // Echtzeit Update der Curve für Fractal
-                            const newCurve = getDistortionCurve(normY * 100);
+                            // Echtzeit Update der Curve für Fractal Live
+                            const newCurve = getDistortionCurve(80 + (normY * 400));
                             activeWaveShapers.forEach(sh => sh.curve = newCurve);
                         }
                     }
