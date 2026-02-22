@@ -12,7 +12,7 @@ let isPlaying = false, isSaveMode = false, playbackStartTime = 0, playbackDurati
 let undoStack = [], liveNodes = [], liveGainNode = null, activeNodes = [], lastAvg = 0;
 let currentTargetTrack = 0, traceCurrentY = 50, isTracing = false, isEffectMode = false, traceCurrentSeg = null, queuedPattern = null;
 
-// FIX: Globale Listen für Fractal Echtzeit-Update & Particle-Drosselung
+// Globale Listen für Fractal Echtzeit-Update & Particle-Drosselung
 let activeWaveShapers = []; 
 let lastParticleTime = 0; 
 
@@ -429,7 +429,7 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
                     if (brush === "fractal") { 
                         const sh = targetCtx.createWaveShaper(); 
                         sh.curve = getDistortionCurve(80 + (fractalMorph * 400)); 
-                        if (targetCtx === audioCtx) activeWaveShapers.push(sh); 
+                        if (targetCtx === audioCtx) activeWaveShapers.push(sh); // Speichern für Live-Updates
                         osc.connect(sh).connect(g); 
                     } else {
                         osc.connect(g);
@@ -446,7 +446,6 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
         });
     });
 }
-
 function setupDrawing(track) {
     let drawing = false;
     
@@ -461,6 +460,7 @@ function setupDrawing(track) {
         if (toolSelect.value === "draw") {
             drawing = true; 
             
+            // Reines Zufallsrauschen speichern (Canvas regelt später das Chaos)
             const rX = Math.random() - 0.5;
             const rY = Math.random() - 0.5;
 
@@ -470,6 +470,7 @@ function setupDrawing(track) {
             
             if (brushSelect.value === "particles") {
                 triggerParticleGrain(track, pos.y);
+                lastParticleTime = performance.now();
             } else {
                 startLiveSynth(track, pos.y);
             }
@@ -487,8 +488,7 @@ function setupDrawing(track) {
             const lastPt = track.curSeg.points[track.curSeg.points.length - 1];
             const dist = Math.hypot(x - lastPt.x, pos.y - lastPt.y);
             
-            // GARANTIE FÜR KONSISTENZ: Nur wenn wir uns 3 Pixel bewegt haben, 
-            // speichern wir einen Punkt UND triggern den Sound!
+            // Räumliche Drosselung: Spart Leistung und macht Particle Brush live identisch zum Loop
             if (dist > 3) { 
                 const rX = Math.random() - 0.5;
                 const rY = Math.random() - 0.5;
@@ -497,7 +497,12 @@ function setupDrawing(track) {
                 redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
                 
                 if (brushSelect.value === "particles") {
-                    triggerParticleGrain(track, pos.y);
+                    const now = performance.now();
+                    // Zeitliche Drosselung auf ca. 60 FPS
+                    if (now - lastParticleTime > 16) {
+                        triggerParticleGrain(track, pos.y);
+                        lastParticleTime = now;
+                    }
                 } else {
                     updateLiveSynth(track, pos.y);
                 }
@@ -906,7 +911,6 @@ function setupTracePad() {
             const pos = getPadPos(e); 
             traceCurrentY = pos.y; 
             if (!isEffectMode) { 
-                // WICHTIG: Partikel werden hier NICHT mehr beim mousemove getriggert! Das passiert jetzt in der loop()
                 if (brushSelect.value !== "particles") {
                     updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); 
                 }
@@ -974,7 +978,6 @@ function setupFX() {
             }
             else if (title.includes("FRACTAL")) {
                 if (param === "MORPH") {
-                    // NEU: Fractal Range von 0 bis 400 skalieren
                     const newCurve = getDistortionCurve(80 + (val * 400)); 
                     activeWaveShapers.forEach(sh => sh.curve = newCurve);
                 }
@@ -1043,9 +1046,8 @@ function loop() {
         if (queuedPattern) { loadPatternData(queuedPattern.data); document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued")); queuedPattern.pad.classList.add("active"); queuedPattern = null; }
         if (document.getElementById("loopCheckbox").checked) { 
             
-            // DER DRIFT-FIX & MEMORY LEAK FIX!
             playbackStartTime += playbackDuration; 
-            activeWaveShapers = []; // <-- WICHTIG: Liste leeren, sonst platzt der Speicher!
+            activeWaveShapers = []; 
             scheduleTracks(playbackStartTime); 
             elapsed = audioCtx.currentTime - playbackStartTime; 
             
@@ -1059,16 +1061,16 @@ function loop() {
     }
     const x = (elapsed / playbackDuration) * 750; 
     
-    // In der loop() Funktion ersetzen:
     if (isTracing && !isEffectMode && traceCurrentSeg) { 
         const rX = Math.random() - 0.5;
         const rY = Math.random() - 0.5;
         traceCurrentSeg.points.push({ x, y: traceCurrentY, rX, rY }); 
-
-        // Sound wird im Tracepad ab sofort synchron zum Speichern getriggert!
+        
+        // NEU: Particle Sound wird im Tracepad exakt dann getriggert, wenn ein Punkt gespeichert wird!
         if (brushSelect.value === "particles") {
             triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY);
         }
+    }
 
     if (isTracing && audioCtx && isEffectMode) {
         const linkedFX = getLinkedFX();
@@ -1116,7 +1118,6 @@ function loop() {
                         if(knobs[0]) { knobs[0].dataset.val = normX; knobs[0].style.transform = `rotate(${-135 + (normX * 270)}deg)`; }
                         if(knobs[1]) { 
                             knobs[1].dataset.val = normY; knobs[1].style.transform = `rotate(${-135 + (normY * 270)}deg)`; 
-                            // Echtzeit Update der Curve für Fractal Live
                             const newCurve = getDistortionCurve(80 + (normY * 400));
                             activeWaveShapers.forEach(sh => sh.curve = newCurve);
                         }
