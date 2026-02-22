@@ -151,6 +151,29 @@ toolSelect.addEventListener("change", (e) => {
     document.body.classList.toggle("eraser-mode", e.target.value === "erase");
 });
 
+// --- NEU: Fractal Brush UI Hervorhebung ---
+function updateFractalFxUI() {
+    const isFractal = brushSelect.value === "fractal";
+    document.querySelectorAll('.fx-unit').forEach(unit => {
+        const header = unit.querySelector('.fx-header');
+        if (header && header.textContent.toUpperCase().includes("FRACTAL")) {
+            unit.style.transition = "all 0.3s ease";
+            unit.style.opacity = isFractal ? "1" : "0.3"; // Dimmen, wenn inaktiv
+            unit.style.boxShadow = isFractal ? "0 0 15px rgba(255, 68, 68, 0.15)" : "none"; // Sanftes rotes Glühen
+            unit.style.borderColor = isFractal ? "#ff4444" : "#333"; 
+            header.style.color = isFractal ? "#ff4444" : "#666";
+            
+            // Optional: Die Knöpfe in der Box auch halb-durchsichtig machen, wenn inaktiv
+            const knobs = unit.querySelectorAll('.knob-container');
+            knobs.forEach(k => k.style.opacity = isFractal ? "1" : "0.5");
+        }
+    });
+}
+brushSelect.addEventListener("change", updateFractalFxUI);
+updateFractalFxUI(); // Einmal direkt beim Start ausführen
+// ------------------------------------------
+
+
 const updateEraserPos = (e) => {
     if (toolSelect.value === "erase" && customEraser) {
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -1042,11 +1065,25 @@ function updateRoutingFromUI() {
 function loop() {
     if (!isPlaying) return; 
     let elapsed = audioCtx.currentTime - playbackStartTime;
+    
     if (elapsed >= playbackDuration) {
-        if (queuedPattern) { loadPatternData(queuedPattern.data); document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued")); queuedPattern.pad.classList.add("active"); queuedPattern = null; }
+        
+        // FIX: Wir merken uns die ALTE Länge, bevor das neue Pattern lädt!
+        let oldDuration = playbackDuration; 
+
+        if (queuedPattern) { 
+            loadPatternData(queuedPattern.data); 
+            document.querySelectorAll(".pad").forEach(p => p.classList.remove("active", "queued")); 
+            queuedPattern.pad.classList.add("active"); 
+            queuedPattern = null; 
+        }
+        
         if (document.getElementById("loopCheckbox").checked) { 
             
-            playbackStartTime += playbackDuration; 
+            // FIX: Wir verschieben die Zeitachse exakt um die alte Länge, 
+            // damit das neue Pattern nahtlos und ohne Lücke anschließt!
+            playbackStartTime += oldDuration; 
+            
             activeWaveShapers = []; 
             scheduleTracks(playbackStartTime); 
             elapsed = audioCtx.currentTime - playbackStartTime; 
@@ -1059,6 +1096,7 @@ function loop() {
         }
         else { isPlaying = false; return; }
     }
+    
     const x = (elapsed / playbackDuration) * 750; 
     
     if (isTracing && !isEffectMode && traceCurrentSeg) { 
@@ -1066,7 +1104,6 @@ function loop() {
         const rY = Math.random() - 0.5;
         traceCurrentSeg.points.push({ x, y: traceCurrentY, rX, rY }); 
         
-        // NEU: Particle Sound wird im Tracepad exakt dann getriggert, wenn ein Punkt gespeichert wird!
         if (brushSelect.value === "particles") {
             triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY);
         }
