@@ -1,20 +1,19 @@
 import { drawGrid, redrawTrack } from './canvas.js';
 import { 
     initAudio, audioCtx, masterGain, analyser, fxNodes, trackSends, 
-    updateTrackVolume, connectTrackToFX, getDistortionCurve, mapYToFrequency, quantizeFrequency 
+    updateTrackVolume, connectTrackToFX, getDistortionCurve, mapYToFrequency, quantizeFrequency,
+    updateReverbDecay
 } from './audio.js';
 import { setupKnob, updatePadUI, resetFXUI } from './ui.js';
 
-// --- State Management ---
 let patternBanks = { A: [null, null, null, null], B: [null, null, null, null], C: [null, null, null, null] };
 let isPlaying = false, isSaveMode = false, playbackStartTime = 0, playbackDuration = 0, animationFrameId;
-let undoStack = [], liveNodes = [], liveGainNode = null, liveFilterNode = null, activeNodes = [], lastAvg = 0;
+let undoStack = [], liveNodes = [], liveGainNode = null, activeNodes = [], lastAvg = 0;
 let currentTargetTrack = 0, traceCurrentY = 50, isTracing = false, isEffectMode = false, traceCurrentSeg = null, queuedPattern = null;
 
 const chordIntervals = { major: [0, 4, 7], minor: [0, 3, 7], diminished: [0, 3, 6], augmented: [0, 4, 8], sus2: [0, 2, 7], sus4: [0, 5, 7] };
 const chordColors = ['#FF5733', '#33FF57', '#3357FF'];
 
-// --- DOM Elemente ---
 const toolSelect = document.getElementById("toolSelect"),
       brushSelect = document.getElementById("brushSelect"),
       sizeSlider = document.getElementById("brushSizeSlider"),
@@ -30,7 +29,6 @@ const tracks = Array.from(document.querySelectorAll(".track-container")).map((c,
     segments: [], wave: "sine", mute: false, vol: 0.8, snap: false, gainNode: null, curSeg: null
 }));
 
-// --- Boot Routine ---
 document.addEventListener("DOMContentLoaded", () => {
     tracks.forEach(t => { drawGrid(t); setupTrackControls(t); setupDrawing(t); });
     loadInitialData();
@@ -42,7 +40,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.body.classList.toggle("eraser-mode", toolSelect.value === "erase");
 });
 
-// --- Hilfsfunktionen & WAV Converter ---
 function getPos(e, c) {
     const r = c.getBoundingClientRect();
     const cx = e.touches ? e.touches[0].clientX : e.clientX, cy = e.touches ? e.touches[0].clientY : e.clientY;
@@ -54,17 +51,21 @@ function saveState() {
     if (undoStack.length > 25) undoStack.shift(); 
 }
 
-function getKnobVal(paramName) {
+function getKnobVal(fxName, paramName) {
     let val = 0;
-    document.querySelectorAll('.knob').forEach(k => {
-        if (k.nextElementSibling && k.nextElementSibling.textContent.trim() === paramName) {
-            val = parseFloat(k.dataset.val || 0.5);
+    document.querySelectorAll('.fx-unit').forEach(unit => {
+        const header = unit.querySelector('.fx-header');
+        if (header && header.textContent.toUpperCase().includes(fxName)) {
+            unit.querySelectorAll('.knob').forEach(k => {
+                if (k.nextElementSibling && k.nextElementSibling.textContent.trim() === paramName) {
+                    val = parseFloat(k.dataset.val || 0.5);
+                }
+            });
         }
     });
     return val;
 }
 
-// FIX: Absolut sicheres DOM-Reading mit textContent statt innerText
 function getMatrixStateByName(fxName, trackIndex) {
     let isActive = false;
     document.querySelectorAll('.fx-unit').forEach(unit => {
@@ -114,7 +115,19 @@ function audioBufferToWav(buffer) {
     return new Blob([bufferArray], { type: "audio/wav" });
 }
 
-// --- Radiergummi Cursor Logik ---
+window.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+    if (e.code === "Space") {
+        e.preventDefault(); 
+        if (isPlaying) document.getElementById("stopButton").click();
+        else document.getElementById("playButton").click();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        document.getElementById("undoButton").click();
+    }
+});
+
 toolSelect.addEventListener("change", (e) => {
     document.body.classList.toggle("eraser-mode", e.target.value === "erase");
 });
@@ -130,36 +143,67 @@ const updateEraserPos = (e) => {
 window.addEventListener("mousemove", updateEraserPos);
 window.addEventListener("touchmove", updateEraserPos, { passive: true });
 
-// --- Datenverwaltung & Preset Routing ---
 function applyAllFXFromUI() {
     if (!audioCtx) return;
-    document.querySelectorAll('.knob').forEach(knob => {
-        const val = parseFloat(knob.dataset.val || 0.5);
-        if (!knob.nextElementSibling) return;
-        const param = knob.nextElementSibling.textContent.trim();
-        if (param === "TIME") fxNodes.delay.node.delayTime.value = val * 1.0;
-        if (param === "FDBK") fxNodes.delay.feedback.gain.value = val * 0.9;
-        if (param === "MIX") fxNodes.reverb.mix.gain.value = val * 1.5;
-        if (param === "RATE") fxNodes.vibrato.lfo.frequency.value = val * 20;
-        if (param === "DEPTH") fxNodes.vibrato.depthNode.gain.value = val * 0.01;
-    });
+    
+    if (fxNodes.delay) {
+        fxNodes.delay.node.delayTime.value = getKnobVal("DELAY", "TIME") * 1.0;
+        fxNodes.delay.feedback.gain.value = getKnobVal("DELAY", "FDBK") * 0.9;
+    }
+    if (fxNodes.reverb) {
+        fxNodes.reverb.mix.gain.value = getKnobVal("REVERB", "MIX") * 1.5;
+        updateReverbDecay(getKnobVal("REVERB", "DECAY")); 
+    }
+    if (fxNodes.vibrato) {
+        fxNodes.vibrato.lfo.frequency.value = getKnobVal("VIBRATO", "RATE") * 20;
+        fxNodes.vibrato.depthNode.gain.value = getKnobVal("VIBRATO", "DEPTH") * 0.01;
+    }
+    if (fxNodes.filter && fxNodes.filter.node1) {
+        const valF = getKnobVal("FILTER", "FREQ");
+        const valR = getKnobVal("FILTER", "RES");
+        fxNodes.filter.node1.frequency.value = Math.pow(valF, 3) * 22000;
+        fxNodes.filter.node2.frequency.value = Math.pow(valF, 3) * 22000;
+        fxNodes.filter.node1.Q.value = valR * 15;
+        fxNodes.filter.node2.Q.value = valR * 15;
+    }
+    if (fxNodes.stutter) {
+        fxNodes.stutter.lfo.frequency.value = (getKnobVal("STUTTER", "RATE") * 15) + 1;
+    }
+
     updateRoutingFromUI();
 }
 
+// FIX: Auto-Load des ersten verfuegbaren Pads beim Start
 function loadInitialData() {
     const saved = localStorage.getItem("pigeonBanks");
-    let hasLocalBanks = false;
+    let loadedFromSave = false;
+
     if (saved) { 
         try { 
             patternBanks = JSON.parse(saved); 
             updatePadUI(patternBanks); 
-            hasLocalBanks = true; 
+            
+            for (let bank of ['A', 'B', 'C']) {
+                for (let i = 0; i < 4; i++) {
+                    if (patternBanks[bank][i]) {
+                        loadPatternData(patternBanks[bank][i]);
+                        const padElem = document.querySelector(`.pad[data-bank="${bank}"][data-idx="${i}"]`);
+                        if (padElem) padElem.classList.add("active");
+                        loadedFromSave = true;
+                        break;
+                    }
+                }
+                if (loadedFromSave) break;
+            }
         } catch(e) {} 
     }
-    fetch('default_set.json').then(res => res.json()).then(data => {
-        if (!hasLocalBanks && data.banks) { patternBanks = data.banks; updatePadUI(patternBanks); }
-        if (data.current) loadPatternData(data.current);
-    }).catch(() => console.log("Default-Set nicht gefunden."));
+    
+    if (!loadedFromSave) {
+        fetch('default_set.json?t=' + Date.now()).then(res => res.json()).then(data => {
+            if (data.banks) { patternBanks = data.banks; updatePadUI(patternBanks); }
+            if (data.current) loadPatternData(data.current);
+        }).catch(() => console.log("Default-Set nicht gefunden."));
+    }
 }
 
 function loadPatternData(d) {
@@ -175,25 +219,35 @@ function loadPatternData(d) {
     if (d.fx) {
         if (d.fx.matrix) {
             d.fx.matrix.forEach((m, i) => {
-                setMatrixStateByName("DELAY", i, m.delay);
-                setMatrixStateByName("REVERB", i, m.reverb);
-                setMatrixStateByName("VIBRATO", i, m.vibrato);
+                setMatrixStateByName("DELAY", i, m.delay || false);
+                setMatrixStateByName("REVERB", i, m.reverb || false);
+                setMatrixStateByName("VIBRATO", i, m.vibrato || false);
+                setMatrixStateByName("FILTER", i, m.filter || false);
+                setMatrixStateByName("STUTTER", i, m.stutter || false);
             });
         }
         
-        const updateKnob = (paramName, rawVal, multiplier) => {
-            document.querySelectorAll('.knob').forEach(knob => {
-                if (knob.nextElementSibling && knob.nextElementSibling.textContent.trim() === paramName) {
-                    const normVal = rawVal / multiplier;
-                    knob.dataset.val = normVal;
-                    knob.style.transform = `rotate(${-135 + (normVal * 270)}deg)`;
+        const updateKnob = (fxName, paramName, rawVal, multiplier) => {
+            document.querySelectorAll('.fx-unit').forEach(unit => {
+                const header = unit.querySelector('.fx-header');
+                if (header && header.textContent.toUpperCase().includes(fxName)) {
+                    unit.querySelectorAll('.knob').forEach(knob => {
+                        if (knob.nextElementSibling && knob.nextElementSibling.textContent.trim() === paramName) {
+                            const normVal = rawVal / multiplier;
+                            knob.dataset.val = normVal;
+                            knob.style.transform = `rotate(${-135 + (normVal * 270)}deg)`;
+                        }
+                    });
                 }
             });
         };
 
-        if (d.fx.delay) { updateKnob("TIME", d.fx.delay.time, 1.0); updateKnob("FDBK", d.fx.delay.feedback, 0.9); }
-        if (d.fx.reverb) { updateKnob("MIX", d.fx.reverb.mix, 1.5); }
-        if (d.fx.vibrato) { updateKnob("RATE", d.fx.vibrato.rate, 20); updateKnob("DEPTH", d.fx.vibrato.depth, 0.01); }
+        if (d.fx.delay) { updateKnob("DELAY", "TIME", d.fx.delay.time, 1.0); updateKnob("DELAY", "FDBK", d.fx.delay.feedback, 0.9); }
+        if (d.fx.reverb) { updateKnob("REVERB", "MIX", d.fx.reverb.mix, 1.5); updateKnob("REVERB", "DECAY", d.fx.reverb.decay !== undefined ? d.fx.reverb.decay : 0.5, 1.0); }
+        if (d.fx.vibrato) { updateKnob("VIBRATO", "RATE", d.fx.vibrato.rate, 20); updateKnob("VIBRATO", "DEPTH", d.fx.vibrato.depth, 0.01); }
+        if (d.fx.filter) { updateKnob("FILTER", "FREQ", d.fx.filter.freq, 1.0); updateKnob("FILTER", "RES", d.fx.filter.res, 1.0); }
+        if (d.fx.stutter) { updateKnob("STUTTER", "RATE", d.fx.stutter.rate, 1.0); updateKnob("STUTTER", "MIX", d.fx.stutter.mix, 1.0); }
+        if (d.fx.fractal) { updateKnob("FRACTAL", "CHAOS", d.fx.fractal.chaos, 1.0); updateKnob("FRACTAL", "MORPH", d.fx.fractal.morph, 1.0); }
 
         applyAllFXFromUI();
     }
@@ -204,32 +258,51 @@ function loadPatternData(d) {
             if (!tracks[idx]) return;
             let t = tracks[idx]; t.segments = JSON.parse(JSON.stringify(td.segments || td || []));
             if (!Array.isArray(td)) { t.vol = td.vol ?? 0.8; t.mute = td.mute ?? false; t.wave = td.wave ?? "sine"; t.snap = td.snap ?? false; }
-            const cont = t.canvas.parentElement;
-            cont.querySelector(".volume-slider").value = t.vol;
-            cont.querySelector(".mute-btn").style.backgroundColor = t.mute ? "#ff4444" : "";
-            const snapBox = cont.querySelector(".snap-checkbox"); if(snapBox) snapBox.checked = t.snap;
-            cont.querySelectorAll(".wave-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.wave === t.wave));
+            
+            const cont = t.canvas.closest('.track-container');
+            if (cont) {
+                cont.querySelector(".volume-slider").value = t.vol;
+                cont.querySelector(".mute-btn").style.backgroundColor = t.mute ? "#ff4444" : "";
+                const snapBox = cont.querySelector(".snap-checkbox"); if(snapBox) snapBox.checked = t.snap;
+                cont.querySelectorAll(".wave-btn").forEach(btn => {
+                    if (btn.dataset.wave === t.wave) btn.classList.add("active");
+                    else btn.classList.remove("active");
+                });
+            }
             redrawTrack(t, undefined, brushSelect.value, chordIntervals, chordColors);
         });
     }
 }
 
-// --- Audio Engine ---
 function startLiveSynth(track, y) {
     if (track.mute || track.vol < 0.01) return;
     liveNodes = []; liveGainNode = audioCtx.createGain(); liveGainNode.gain.setValueAtTime(0, audioCtx.currentTime);
     liveGainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.01);
     let freq = mapYToFrequency(y, track.canvas.height); if (harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value);
-    const brush = brushSelect.value; const ivs = (brush === "chord") ? chordIntervals[chordSelect.value] : [0];
+    
+    const brush = brushSelect.value; 
+    const ivs = (brush === "chord") ? chordIntervals[chordSelect.value] : [0];
+    const fractalMorph = getKnobVal("FRACTAL", "MORPH") || 0;
+
     ivs.forEach(iv => {
         const osc = audioCtx.createOscillator(); osc.type = track.wave;
         osc.frequency.setValueAtTime(freq * Math.pow(2, iv / 12), audioCtx.currentTime);
-        if(brush === "fractal") { const sh = audioCtx.createWaveShaper(); sh.curve = getDistortionCurve(); osc.connect(sh).connect(liveGainNode); }
-        else osc.connect(liveGainNode);
+        
+        if(brush === "fractal") { 
+            const sh = audioCtx.createWaveShaper(); 
+            sh.curve = getDistortionCurve(fractalMorph * 100); 
+            osc.connect(sh).connect(liveGainNode); 
+        } else {
+            osc.connect(liveGainNode);
+        }
         osc.start(); liveNodes.push(osc);
     });
-    const trackG = audioCtx.createGain(); trackG.gain.value = track.vol;
-    liveGainNode.connect(trackG).connect(masterGain); connectTrackToFX(trackG, track.index); liveGainNode.out = trackG;
+    
+    const trackG = audioCtx.createGain(); 
+    trackG.gain.value = track.vol;
+    liveGainNode.connect(trackG); 
+    connectTrackToFX(trackG, track.index); 
+    liveGainNode.out = trackG;
 }
 
 function updateLiveSynth(track, y) {
@@ -251,13 +324,20 @@ function stopLiveSynth() {
     liveNodes = []; liveGainNode = null;
 }
 
-function triggerParticleGrain(track, y) {
-    if (track.mute || track.vol < 0.01) return;
-    let freq = mapYToFrequency(y, track.canvas.height); if (harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value);
-    const osc = audioCtx.createOscillator(), env = audioCtx.createGain(), trkG = audioCtx.createGain(), now = audioCtx.currentTime;
-    osc.type = track.wave; osc.frequency.value = freq; trkG.gain.value = track.vol;
-    env.gain.setValueAtTime(0, now); env.gain.linearRampToValueAtTime(0.4, now + 0.01); env.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-    osc.connect(env).connect(trkG).connect(masterGain); connectTrackToFX(trkG, track.index);
+function triggerParticleGrain(track, y) { 
+    if(track.mute || track.vol < 0.01) return; 
+    let freq = mapYToFrequency(y, track.canvas.height); if(harmonizeCheckbox.checked) freq = quantizeFrequency(freq, scaleSelect.value); 
+    
+    const osc = audioCtx.createOscillator(); osc.type = track.wave; osc.frequency.value = freq; 
+    const env = audioCtx.createGain(); const now = audioCtx.currentTime;
+    
+    env.gain.setValueAtTime(0, now); 
+    env.gain.linearRampToValueAtTime(0.4, now + 0.01); 
+    env.gain.exponentialRampToValueAtTime(0.01, now + 0.15); 
+    
+    const trackG = audioCtx.createGain(); trackG.gain.value = track.vol;
+    osc.connect(env).connect(trackG); 
+    connectTrackToFX(trackG, track.index);
     
     osc.onended = () => { const idx = activeNodes.indexOf(osc); if (idx > -1) activeNodes.splice(idx, 1); };
     osc.start(now); osc.stop(now + 0.2); 
@@ -266,21 +346,52 @@ function triggerParticleGrain(track, y) {
 
 function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, offlineFX = null) {
     tracks.forEach(track => {
-        const trkG = targetCtx.createGain(); trkG.connect(targetDest); trkG.gain.value = track.mute ? 0 : track.vol;
-        if (targetCtx === audioCtx) { track.gainNode = trkG; connectTrackToFX(trkG, track.index); }
-        else if (offlineFX) { 
+        const trkG = targetCtx.createGain(); 
+        trkG.gain.value = track.mute ? 0 : track.vol;
+        
+        if (targetCtx === audioCtx) { 
+            track.gainNode = trkG; 
+            connectTrackToFX(trkG, track.index); 
+        } else if (offlineFX) { 
+            let dryVol = 1.0;
+            const hasFilter = getMatrixStateByName("FILTER", track.index);
+            const hasStutter = getMatrixStateByName("STUTTER", track.index);
+            
+            if (hasFilter) dryVol = 0.0;
+            else if (hasStutter) dryVol = 1.0 - getKnobVal("STUTTER", "MIX");
+            
+            const dryGain = targetCtx.createGain();
+            dryGain.gain.value = dryVol;
+            trkG.connect(dryGain);
+            dryGain.connect(targetDest);
+
             if (getMatrixStateByName("DELAY", track.index)) trkG.connect(offlineFX.delay);
             if (getMatrixStateByName("VIBRATO", track.index)) trkG.connect(offlineFX.vibrato);
+            if (getMatrixStateByName("REVERB", track.index) && offlineFX.reverb) trkG.connect(offlineFX.reverb); 
+            if (hasFilter && offlineFX.filterInput) trkG.connect(offlineFX.filterInput);
+            
+            if (hasStutter && offlineFX.stutter) {
+                const stutterSend = targetCtx.createGain();
+                stutterSend.gain.value = getKnobVal("STUTTER", "MIX");
+                trkG.connect(stutterSend);
+                stutterSend.connect(offlineFX.stutter);
+            }
         }
         
+        const fractalMorph = getKnobVal("FRACTAL", "MORPH") || 0;
+
         track.segments.forEach(seg => {
             const brush = seg.brush || "standard", sorted = seg.points.slice().sort((a, b) => a.x - b.x);
             if (sorted.length < 2 && brush !== "particles") return;
+            
             if (brush === "particles") {
                 seg.points.forEach(p => {
                     const t = Math.max(0, start + (p.x / 750) * playbackDuration), osc = targetCtx.createOscillator(), env = targetCtx.createGain();
                     osc.type = track.wave; let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
-                    osc.frequency.value = f; env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.4, t + 0.01); env.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+                    
+                    osc.frequency.value = f; 
+                    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.4, t + 0.01); env.gain.exponentialRampToValueAtTime(0.01, t + 0.15); 
+                    
                     osc.connect(env).connect(trkG); 
                     osc.onended = () => { const idx = activeNodes.indexOf(osc); if (idx > -1) activeNodes.splice(idx, 1); };
                     osc.start(t); osc.stop(t + 0.2); 
@@ -292,7 +403,13 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
                 ivs.forEach(iv => {
                     const osc = targetCtx.createOscillator(), g = targetCtx.createGain(); osc.type = track.wave;
                     g.gain.setValueAtTime(0, sT); g.gain.linearRampToValueAtTime(0.3, sT + 0.02); g.gain.setValueAtTime(0.3, eT); g.gain.linearRampToValueAtTime(0, eT + 0.1);
-                    if (brush === "fractal") { const sh = targetCtx.createWaveShaper(); sh.curve = getDistortionCurve(); osc.connect(sh).connect(g); } else osc.connect(g);
+                    if (brush === "fractal") { 
+                        const sh = targetCtx.createWaveShaper(); 
+                        sh.curve = getDistortionCurve(fractalMorph * 100); 
+                        osc.connect(sh).connect(g); 
+                    } else {
+                        osc.connect(g);
+                    }
                     g.connect(trkG); sorted.forEach(p => {
                         const t = Math.max(0, start + (p.x / 750) * playbackDuration); let f = mapYToFrequency(p.y, 100); if (harmonizeCheckbox.checked) f = quantizeFrequency(f, scaleSelect.value);
                         osc.frequency.linearRampToValueAtTime(f * Math.pow(2, iv/12), t);
@@ -306,7 +423,6 @@ function scheduleTracks(start, targetCtx = audioCtx, targetDest = masterGain, of
     });
 }
 
-// --- Interaction ---
 function setupDrawing(track) {
     let drawing = false;
     const start = e => {
@@ -319,7 +435,12 @@ function setupDrawing(track) {
         
         if (toolSelect.value === "draw") {
             drawing = true; 
-            let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+            let jX = 0, jY = 0; 
+            if (brushSelect.value === "fractal") { 
+                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
+                jX = (Math.random() * 40 - 20) * (chaos * 2); 
+                jY = (Math.random() * 80 - 40) * (chaos * 2); 
+            }
             track.curSeg = { points: [{ x, y: pos.y, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value };
             track.segments.push(track.curSeg); 
             redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
@@ -335,7 +456,12 @@ function setupDrawing(track) {
         const x = track.snap ? Math.round(pos.x / (750 / 32)) * (750 / 32) : pos.x;
         
         if (drawing && track.curSeg) {
-            let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; }
+            let jX = 0, jY = 0; 
+            if (brushSelect.value === "fractal") { 
+                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
+                jX = (Math.random() * 40 - 20) * (chaos * 2); 
+                jY = (Math.random() * 80 - 40) * (chaos * 2); 
+            }
             track.curSeg.points.push({ x, y: pos.y, jX, jY }); 
             redrawTrack(track, undefined, brushSelect.value, chordIntervals, chordColors);
             if (brushSelect.value === "particles") triggerParticleGrain(track, pos.y); else updateLiveSynth(track, pos.y);
@@ -374,6 +500,55 @@ function erase(t, x, y) {
 }
 
 function setupMainControls() {
+    
+    let extSyncActive = false;
+    let midiAccess = null;
+    let clockCount = 0;
+    let lastClockTime = 0;
+
+    const extSyncBtn = document.getElementById("extSyncBtn");
+    const bpmInput = document.getElementById("bpmInput");
+    
+    if (extSyncBtn) {
+        extSyncBtn.addEventListener("click", () => {
+            extSyncActive = !extSyncActive;
+            extSyncBtn.classList.toggle("active", extSyncActive);
+            bpmInput.disabled = extSyncActive;
+            
+            if (extSyncActive && navigator.requestMIDIAccess) {
+                navigator.requestMIDIAccess().then(access => {
+                    midiAccess = access;
+                    for (let input of midiAccess.inputs.values()) input.onmidimessage = handleMIDIMessage;
+                    midiAccess.onstatechange = (e) => { if(e.port.type === 'input' && e.port.state === 'connected') e.port.onmidimessage = handleMIDIMessage; };
+                }).catch(err => console.error("Web MIDI API blockiert.", err));
+            }
+        });
+    }
+
+    function handleMIDIMessage(message) {
+        if (!extSyncActive) return;
+        const status = message.data[0];
+        
+        if (status === 248) { 
+            clockCount++;
+            if (clockCount === 24) {
+                const now = performance.now();
+                if (lastClockTime > 0) {
+                    const beatMs = now - lastClockTime;
+                    const calcBPM = Math.round(60000 / beatMs);
+                    if(calcBPM > 40 && calcBPM < 300) {
+                        bpmInput.value = calcBPM;
+                        playbackDuration = (60 / calcBPM) * 32;
+                    }
+                }
+                lastClockTime = now;
+                clockCount = 0;
+            }
+        } 
+        else if (status === 250 || status === 251) { clockCount = 0; if (!isPlaying) document.getElementById("playButton").click(); } 
+        else if (status === 252) { if (isPlaying) document.getElementById("stopButton").click(); }
+    }
+
     let mediaRecorder = null;
     let recordedChunks = [];
     const recBtn = document.getElementById("recButton");
@@ -434,23 +609,54 @@ function setupMainControls() {
         mDest.connect(offCtx.destination);
         
         const fxOff = {
-            delay: offCtx.createDelay(),
-            delayFbk: offCtx.createGain(),
-            vibrato: offCtx.createDelay(),
-            vibLfo: offCtx.createOscillator(),
-            vibDepth: offCtx.createGain()
+            delay: offCtx.createDelay(), delayFbk: offCtx.createGain(),
+            vibrato: offCtx.createDelay(), vibLfo: offCtx.createOscillator(), vibDepth: offCtx.createGain(),
+            reverb: offCtx.createConvolver(), reverbMix: offCtx.createGain(),
+            filter: offCtx.createBiquadFilter(), filterDrive: offCtx.createWaveShaper(),
+            stutter: offCtx.createGain(), stutterLfo: offCtx.createOscillator()
         };
         
-        fxOff.delay.delayTime.value = getKnobVal("TIME") * 1.0;
-        fxOff.delayFbk.gain.value = getKnobVal("FDBK") * 0.9;
+        fxOff.delay.delayTime.value = getKnobVal("DELAY", "TIME") * 1.0;
+        fxOff.delayFbk.gain.value = getKnobVal("DELAY", "FDBK") * 0.9;
         fxOff.delay.connect(fxOff.delayFbk); fxOff.delayFbk.connect(fxOff.delay);
         fxOff.delay.connect(mDest);
         
         fxOff.vibrato.delayTime.value = 0.03;
-        fxOff.vibLfo.frequency.value = getKnobVal("RATE") * 20;
-        fxOff.vibDepth.gain.value = getKnobVal("DEPTH") * 0.01;
+        fxOff.vibLfo.frequency.value = getKnobVal("VIBRATO", "RATE") * 20;
+        fxOff.vibDepth.gain.value = getKnobVal("VIBRATO", "DEPTH") * 0.01;
         fxOff.vibLfo.connect(fxOff.vibDepth); fxOff.vibDepth.connect(fxOff.vibrato.delayTime);
         fxOff.vibLfo.start(0); fxOff.vibrato.connect(mDest);
+
+        const revDecay = getKnobVal("REVERB", "DECAY") * 1.0 || 0.5;
+        const revDur = 0.1 + (revDecay * 4.0);
+        const revLen = Math.floor(sampleRate * revDur);
+        const revImp = offCtx.createBuffer(2, revLen, sampleRate);
+        for (let i = 0; i < 2; i++) {
+            const chan = revImp.getChannelData(i);
+            for (let j = 0; j < revLen; j++) chan[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / revLen, 3);
+        }
+        fxOff.reverb.buffer = revImp;
+        fxOff.reverbMix.gain.value = getKnobVal("REVERB", "MIX") * 1.5;
+        fxOff.reverb.connect(fxOff.reverbMix); fxOff.reverbMix.connect(mDest);
+
+        fxOff.filter.type = 'lowpass';
+        const fVal = getKnobVal("FILTER", "FREQ");
+        const rVal = getKnobVal("FILTER", "RES");
+        fxOff.filter.frequency.value = Math.pow(fVal, 3) * 22000;
+        fxOff.filter.Q.value = rVal * 15;
+        fxOff.filterDrive.curve = getDistortionCurve(rVal * 50); 
+        fxOff.filterDrive.connect(fxOff.filter);
+        fxOff.filter.connect(mDest);
+        fxOff.filterInput = fxOff.filterDrive; 
+
+        fxOff.stutter.gain.value = 0;
+        fxOff.stutterLfo.type = 'square';
+        fxOff.stutterLfo.frequency.value = (getKnobVal("STUTTER", "RATE") * 15) + 1;
+        const stAmp = offCtx.createGain(); stAmp.gain.value = 0.5;
+        const stOff = offCtx.createConstantSource(); stOff.offset.value = 0.5; stOff.start(0);
+        fxOff.stutterLfo.connect(stAmp); stAmp.connect(fxOff.stutter.gain); stOff.connect(fxOff.stutter.gain);
+        fxOff.stutterLfo.start(0);
+        fxOff.stutter.connect(mDest);
 
         scheduleTracks(0, offCtx, mDest, fxOff);
         
@@ -512,10 +718,19 @@ function setupMainControls() {
             current: { 
                 settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, 
                 fx: { 
-                    delay: { time: getKnobVal("TIME") * 1.0, feedback: getKnobVal("FDBK") * 0.9 }, 
-                    reverb: { mix: getKnobVal("MIX") * 1.5 }, 
-                    vibrato: { rate: getKnobVal("RATE") * 20, depth: getKnobVal("DEPTH") * 0.01 }, 
-                    matrix: tracks.map((_, i) => ({ delay: getMatrixStateByName("DELAY", i), reverb: getMatrixStateByName("REVERB", i), vibrato: getMatrixStateByName("VIBRATO", i) })) 
+                    delay: { time: getKnobVal("DELAY", "TIME") * 1.0, feedback: getKnobVal("DELAY", "FDBK") * 0.9 }, 
+                    reverb: { mix: getKnobVal("REVERB", "MIX") * 1.5, decay: getKnobVal("REVERB", "DECAY") * 1.0 }, 
+                    vibrato: { rate: getKnobVal("VIBRATO", "RATE") * 20, depth: getKnobVal("VIBRATO", "DEPTH") * 0.01 }, 
+                    filter: { freq: getKnobVal("FILTER", "FREQ") * 1.0, res: getKnobVal("FILTER", "RES") * 1.0 }, 
+                    stutter: { rate: getKnobVal("STUTTER", "RATE") * 1.0, mix: getKnobVal("STUTTER", "MIX") * 1.0 }, 
+                    fractal: { chaos: getKnobVal("FRACTAL", "CHAOS") * 1.0, morph: getKnobVal("FRACTAL", "MORPH") * 1.0 }, 
+                    matrix: tracks.map((_, i) => ({ 
+                        delay: getMatrixStateByName("DELAY", i), 
+                        reverb: getMatrixStateByName("REVERB", i), 
+                        vibrato: getMatrixStateByName("VIBRATO", i),
+                        filter: getMatrixStateByName("FILTER", i),
+                        stutter: getMatrixStateByName("STUTTER", i)
+                    })) 
                 }, 
                 tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) 
             }, 
@@ -526,7 +741,6 @@ function setupMainControls() {
     
     document.getElementById("importButton").addEventListener("click", () => document.getElementById("importFileInput").click());
     
-    // FIX: Import Input wird jetzt sauber zurückgesetzt, damit dieselbe Datei mehrfach geladen werden kann
     document.getElementById("importFileInput").addEventListener("change", e => { 
         const file = e.target.files[0];
         if(!file) return;
@@ -539,7 +753,7 @@ function setupMainControls() {
             } catch(err) { console.error("Fehler beim Laden des Sets:", err); }
         }; 
         r.readAsText(file); 
-        e.target.value = ''; // Wichtig!
+        e.target.value = ''; 
     });
 }
 
@@ -552,10 +766,19 @@ function setupPads() {
                 patternBanks[b][i] = { 
                     settings: { bpm: document.getElementById("bpmInput").value, loop: document.getElementById("loopCheckbox").checked, scale: scaleSelect.value, harmonize: harmonizeCheckbox.checked }, 
                     fx: { 
-                        delay: { time: getKnobVal("TIME") * 1.0, feedback: getKnobVal("FDBK") * 0.9 }, 
-                        reverb: { mix: getKnobVal("MIX") * 1.5 }, 
-                        vibrato: { rate: getKnobVal("RATE") * 20, depth: getKnobVal("DEPTH") * 0.01 }, 
-                        matrix: tracks.map((_, trackIdx) => ({ delay: getMatrixStateByName("DELAY", trackIdx), reverb: getMatrixStateByName("REVERB", trackIdx), vibrato: getMatrixStateByName("VIBRATO", trackIdx) })) 
+                        delay: { time: getKnobVal("DELAY", "TIME") * 1.0, feedback: getKnobVal("DELAY", "FDBK") * 0.9 }, 
+                        reverb: { mix: getKnobVal("REVERB", "MIX") * 1.5, decay: getKnobVal("REVERB", "DECAY") * 1.0 }, 
+                        vibrato: { rate: getKnobVal("VIBRATO", "RATE") * 20, depth: getKnobVal("VIBRATO", "DEPTH") * 0.01 }, 
+                        filter: { freq: getKnobVal("FILTER", "FREQ") * 1.0, res: getKnobVal("FILTER", "RES") * 1.0 }, 
+                        stutter: { rate: getKnobVal("STUTTER", "RATE") * 1.0, mix: getKnobVal("STUTTER", "MIX") * 1.0 }, 
+                        fractal: { chaos: getKnobVal("FRACTAL", "CHAOS") * 1.0, morph: getKnobVal("FRACTAL", "MORPH") * 1.0 }, 
+                        matrix: tracks.map((_, trackIdx) => ({ 
+                            delay: getMatrixStateByName("DELAY", trackIdx), 
+                            reverb: getMatrixStateByName("REVERB", trackIdx), 
+                            vibrato: getMatrixStateByName("VIBRATO", trackIdx),
+                            filter: getMatrixStateByName("FILTER", trackIdx),
+                            stutter: getMatrixStateByName("STUTTER", trackIdx)
+                        })) 
                     },
                     tracks: tracks.map(t => ({ segments: t.segments, vol: t.vol, mute: t.mute, wave: t.wave, snap: t.snap })) 
                 };
@@ -578,6 +801,9 @@ function getLinkedFX() {
             if(title.includes("DELAY")) linked.push("delay");
             if(title.includes("REVERB")) linked.push("reverb");
             if(title.includes("VIBRATO")) linked.push("vibrato");
+            if(title.includes("FILTER")) linked.push("filter");
+            if(title.includes("STUTTER")) linked.push("stutter");
+            if(title.includes("FRACTAL")) linked.push("fractal");
         }
     });
     return linked;
@@ -592,10 +818,34 @@ function setupTracePad() {
         saveState(); 
         
         isEffectMode = document.querySelectorAll('.fx-xy-link.active').length > 0;
-        if (!isEffectMode) { const elapsed = audioCtx.currentTime - playbackStartTime, currentX = (elapsed / playbackDuration) * 750; let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; } traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; tracks[currentTargetTrack].segments.push(traceCurrentSeg); if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else startLiveSynth(tracks[currentTargetTrack], traceCurrentY); }
+        
+        if (!isEffectMode) { 
+            const elapsed = audioCtx.currentTime - playbackStartTime;
+            const currentX = (elapsed / playbackDuration) * 750; 
+            let jX = 0, jY = 0; 
+            if (brushSelect.value === "fractal") { 
+                const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
+                jX = (Math.random() * 40 - 20) * (chaos * 2); 
+                jY = (Math.random() * 80 - 40) * (chaos * 2); 
+            } 
+            traceCurrentSeg = { points: [{ x: currentX, y: traceCurrentY, jX, jY }], brush: brushSelect.value, thickness: parseInt(sizeSlider.value), chordType: chordSelect.value }; 
+            tracks[currentTargetTrack].segments.push(traceCurrentSeg); 
+            if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else startLiveSynth(tracks[currentTargetTrack], traceCurrentY); 
+        } else {
+            traceCurrentSeg = null; 
+        }
     });
     
-    tracePad.addEventListener("mousemove", e => { if (isTracing) { const pos = getPadPos(e); traceCurrentY = pos.y; if (!isEffectMode) { if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); else updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); } } });
+    tracePad.addEventListener("mousemove", e => { 
+        if (isTracing) { 
+            const pos = getPadPos(e); 
+            traceCurrentY = pos.y; 
+            if (!isEffectMode) { 
+                if (brushSelect.value === "particles") triggerParticleGrain(tracks[currentTargetTrack], traceCurrentY); 
+                else updateLiveSynth(tracks[currentTargetTrack], traceCurrentY); 
+            } 
+        } 
+    });
     
     window.addEventListener("mouseup", () => { 
         if (isTracing) { 
@@ -629,12 +879,28 @@ function setupFX() {
                 if (param === "TIME") fxNodes.delay.node.delayTime.setTargetAtTime(val * 1.0, audioCtx.currentTime, 0.05); 
                 if (param === "FDBK") fxNodes.delay.feedback.gain.setTargetAtTime(val * 0.9, audioCtx.currentTime, 0.05); 
             }
-            else if (title.includes("REVERB") && param === "MIX") {
-                fxNodes.reverb.mix.gain.setTargetAtTime(val * 1.5, audioCtx.currentTime, 0.05);
+            else if (title.includes("REVERB")) {
+                if (param === "MIX") fxNodes.reverb.mix.gain.setTargetAtTime(val * 1.5, audioCtx.currentTime, 0.05);
+                if (param === "DECAY") updateReverbDecay(val); 
             }
             else if (title.includes("VIBRATO")) { 
                 if (param === "RATE") fxNodes.vibrato.lfo.frequency.setTargetAtTime(val * 20, audioCtx.currentTime, 0.05); 
                 if (param === "DEPTH") fxNodes.vibrato.depthNode.gain.setTargetAtTime(val * 0.01, audioCtx.currentTime, 0.05); 
+            }
+            else if (title.includes("FILTER") && fxNodes.filter && fxNodes.filter.node1) {
+                if (param === "FREQ") {
+                    const cutoff = Math.pow(val, 3) * 22000;
+                    fxNodes.filter.node1.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.05);
+                    fxNodes.filter.node2.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.05);
+                }
+                if (param === "RES") {
+                    fxNodes.filter.node1.Q.setTargetAtTime(val * 15, audioCtx.currentTime, 0.05);
+                    fxNodes.filter.node2.Q.setTargetAtTime(val * 15, audioCtx.currentTime, 0.05);
+                }
+            }
+            else if (title.includes("STUTTER") && fxNodes.stutter) {
+                if (param === "RATE") fxNodes.stutter.lfo.frequency.setTargetAtTime((val * 15) + 1, audioCtx.currentTime, 0.05);
+                if (param === "MIX") updateRoutingFromUI();
             }
         });
     });
@@ -644,22 +910,52 @@ function setupFX() {
 
 function updateRoutingFromUI() {
     if (!audioCtx) return;
+    
+    const filterActive = [];
+    const stutterActive = [];
+
     document.querySelectorAll('.fx-unit').forEach(unit => {
         const header = unit.querySelector('.fx-header');
         if(!header) return;
         const title = header.textContent.toUpperCase();
-        let fxName = "delay";
-        if (title.includes("REVERB")) fxName = "reverb";
-        if (title.includes("VIBRATO")) fxName = "vibrato";
         
-        unit.querySelectorAll('.matrix-btn').forEach((btn, idx) => { 
-            const active = btn.classList.contains('active'); 
-            if(trackSends[idx] && trackSends[idx][fxName]){
-                trackSends[idx][fxName].gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.05); 
+        let fxName = null;
+        if (title.includes("DELAY")) fxName = "delay";
+        else if (title.includes("REVERB")) fxName = "reverb";
+        else if (title.includes("VIBRATO")) fxName = "vibrato";
+        else if (title.includes("FILTER")) fxName = "filter";
+        else if (title.includes("STUTTER")) fxName = "stutter";
+        
+        if (fxName) {
+            unit.querySelectorAll('.matrix-btn').forEach((btn, idx) => { 
+                const active = btn.classList.contains('active'); 
+                if(trackSends[idx] && trackSends[idx][fxName]){
+                    if (fxName === "stutter") {
+                        stutterActive[idx] = active;
+                        trackSends[idx].stutter.gain.setTargetAtTime(active ? getKnobVal("STUTTER", "MIX") : 0, audioCtx.currentTime, 0.05);
+                    } else if (fxName === "filter") {
+                        filterActive[idx] = active;
+                        trackSends[idx].filter.gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.05);
+                    } else {
+                        trackSends[idx][fxName].gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.05); 
+                    }
+                }
+            });
+            const led = unit.querySelector('.led');
+            if (led) led.classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
+        }
+    });
+
+    tracks.forEach((_, idx) => {
+        if (trackSends[idx] && trackSends[idx].dry) {
+            let dryVol = 1.0;
+            if (filterActive[idx]) dryVol = 0.0; 
+            else if (stutterActive[idx]) {
+                const mix = getKnobVal("STUTTER", "MIX");
+                dryVol = 1.0 - mix; 
             }
-        });
-        const led = unit.querySelector('.led');
-        if (led) led.classList.toggle('on', unit.querySelectorAll('.matrix-btn.active').length > 0);
+            trackSends[idx].dry.gain.setTargetAtTime(dryVol, audioCtx.currentTime, 0.05);
+        }
     });
 }
 
@@ -679,28 +975,65 @@ function loop() {
     }
     const x = (elapsed / playbackDuration) * 750; 
     
-    if (isTracing && traceCurrentSeg) { 
-        let jX = 0, jY = 0; if (brushSelect.value === "fractal") { jX = Math.random() * 20 - 10; jY = Math.random() * 40 - 20; } 
+    if (isTracing && !isEffectMode && traceCurrentSeg) { 
+        let jX = 0, jY = 0; 
+        if (brushSelect.value === "fractal") { 
+            const chaos = getKnobVal("FRACTAL", "CHAOS") || 0.5;
+            jX = (Math.random() * 40 - 20) * (chaos * 2); 
+            jY = (Math.random() * 80 - 40) * (chaos * 2); 
+        } 
         traceCurrentSeg.points.push({ x, y: traceCurrentY, jX, jY }); 
-        
-        if(audioCtx) {
-            const linkedFX = getLinkedFX();
-            const normX = x / 750; 
-            const normY = 1.0 - (traceCurrentY / 100); 
-            linkedFX.forEach(fx => {
-                if(fx === "delay" && fxNodes.delay.node) {
-                    fxNodes.delay.node.delayTime.setTargetAtTime(normX * 1.0, audioCtx.currentTime, 0.05); 
-                    fxNodes.delay.feedback.gain.setTargetAtTime(normY * 0.9, audioCtx.currentTime, 0.05); 
+    }
+
+    if (isTracing && audioCtx && isEffectMode) {
+        const linkedFX = getLinkedFX();
+        const normX = x / 750; 
+        const normY = 1.0 - (traceCurrentY / 100); 
+        linkedFX.forEach(fx => {
+            if(fx === "delay" && fxNodes.delay.node) {
+                fxNodes.delay.node.delayTime.setTargetAtTime(normX * 1.0, audioCtx.currentTime, 0.05); 
+                fxNodes.delay.feedback.gain.setTargetAtTime(normY * 0.9, audioCtx.currentTime, 0.05); 
+            }
+            if(fx === "vibrato" && fxNodes.vibrato.lfo) {
+                fxNodes.vibrato.lfo.frequency.setTargetAtTime(normX * 20, audioCtx.currentTime, 0.05); 
+                fxNodes.vibrato.depthNode.gain.setTargetAtTime(normY * 0.01, audioCtx.currentTime, 0.05); 
+            }
+            if(fx === "reverb" && fxNodes.reverb.mix) {
+                fxNodes.reverb.mix.gain.setTargetAtTime(normY * 1.5, audioCtx.currentTime, 0.05); 
+                if (!fxNodes.reverb.lastX || Math.abs(fxNodes.reverb.lastX - normX) > 0.05) {
+                    updateReverbDecay(normX);
+                    fxNodes.reverb.lastX = normX;
                 }
-                if(fx === "vibrato" && fxNodes.vibrato.lfo) {
-                    fxNodes.vibrato.lfo.frequency.setTargetAtTime(normX * 20, audioCtx.currentTime, 0.05); 
-                    fxNodes.vibrato.depthNode.gain.setTargetAtTime(normY * 0.01, audioCtx.currentTime, 0.05); 
-                }
-                if(fx === "reverb" && fxNodes.reverb.mix) {
-                    fxNodes.reverb.mix.gain.setTargetAtTime(normY * 1.5, audioCtx.currentTime, 0.05); 
-                }
-            });
-        }
+            }
+            if(fx === "filter" && fxNodes.filter && fxNodes.filter.node1) {
+                const cutoff = Math.pow(normX, 3) * 22000;
+                fxNodes.filter.node1.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.05);
+                fxNodes.filter.node2.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.05);
+                fxNodes.filter.node1.Q.setTargetAtTime(normY * 15, audioCtx.currentTime, 0.05);
+                fxNodes.filter.node2.Q.setTargetAtTime(normY * 15, audioCtx.currentTime, 0.05);
+            }
+            if(fx === "stutter" && fxNodes.stutter) {
+                fxNodes.stutter.lfo.frequency.setTargetAtTime((normX * 15) + 1, audioCtx.currentTime, 0.05);
+                document.querySelectorAll('.fx-unit').forEach(unit => {
+                    const header = unit.querySelector('.fx-header');
+                    if (header && header.textContent.toUpperCase().includes("STUTTER")) {
+                        const knobs = unit.querySelectorAll('.knob');
+                        if(knobs[1]) { knobs[1].dataset.val = normY; knobs[1].style.transform = `rotate(${-135 + (normY * 270)}deg)`; }
+                    }
+                });
+                updateRoutingFromUI();
+            }
+            if(fx === "fractal") {
+                document.querySelectorAll('.fx-unit').forEach(unit => {
+                    const header = unit.querySelector('.fx-header');
+                    if (header && header.textContent.toUpperCase().includes("FRACTAL")) {
+                        const knobs = unit.querySelectorAll('.knob');
+                        if(knobs[0]) { knobs[0].dataset.val = normX; knobs[0].style.transform = `rotate(${-135 + (normX * 270)}deg)`; }
+                        if(knobs[1]) { knobs[1].dataset.val = normY; knobs[1].style.transform = `rotate(${-135 + (normY * 270)}deg)`; }
+                    }
+                });
+            }
+        });
     }
     
     tracks.forEach(t => redrawTrack(t, x, brushSelect.value, chordIntervals, chordColors)); 
@@ -710,9 +1043,27 @@ function loop() {
 }
 
 function setupTrackControls(t) {
-    const cont = t.canvas.parentElement;
-    cont.querySelectorAll(".wave-btn").forEach(b => b.addEventListener("click", () => { t.wave = b.dataset.wave; cont.querySelectorAll(".wave-btn").forEach(btn => btn.classList.remove("active")); b.classList.add("active"); }));
-    cont.querySelector(".mute-btn").addEventListener("click", e => { t.mute = !t.mute; e.target.style.backgroundColor = t.mute ? "#ff4444" : ""; updateTrackVolume(t); });
-    cont.querySelector(".volume-slider").addEventListener("input", e => { t.vol = parseFloat(e.target.value); updateTrackVolume(t); });
-    cont.querySelector(".snap-checkbox")?.addEventListener("change", e => t.snap = e.target.checked);
+    const cont = t.canvas.closest('.track-container'); 
+    if(!cont) return;
+    
+    cont.querySelectorAll(".wave-btn").forEach(b => b.addEventListener("click", () => { 
+        t.wave = b.dataset.wave; 
+        cont.querySelectorAll(".wave-btn").forEach(btn => btn.classList.remove("active")); 
+        b.classList.add("active"); 
+    }));
+    
+    const muteBtn = cont.querySelector(".mute-btn");
+    if(muteBtn) {
+        muteBtn.addEventListener("click", e => { 
+            t.mute = !t.mute; 
+            e.target.style.backgroundColor = t.mute ? "#ff4444" : ""; 
+            updateTrackVolume(t); 
+        });
+    }
+
+    const volSlider = cont.querySelector(".volume-slider");
+    if(volSlider) volSlider.addEventListener("input", e => { t.vol = parseFloat(e.target.value); updateTrackVolume(t); });
+    
+    const snapBox = cont.querySelector(".snap-checkbox");
+    if(snapBox) snapBox.addEventListener("change", e => t.snap = e.target.checked);
 }
