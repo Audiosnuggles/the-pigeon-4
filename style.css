@@ -6,7 +6,14 @@ body {
 }
 input { user-select: auto; -webkit-user-select: auto; }
 #main { width: 920px; margin: 0 auto; background-color: #f5f5f5; padding: 20px; border: 1px solid #ccc; position: relative; z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
-h1 { font-family: "Courier New", monospace; margin-top: 0; }
+
+h1 { 
+  font-family: "Courier New", monospace; 
+  margin-top: 0; 
+  color: #000;
+  display: inline-block;
+  letter-spacing: 1px;
+}
 
 /* --- TRACKS --- */
 .track-container { display: flex; align-items: center; gap: 8px; background: #fff; padding: 5px; border: 1px solid #ddd; margin-bottom: 10px; }
@@ -37,8 +44,6 @@ canvas { border: 1px solid #ccc; background-color: #fff; cursor: crosshair; disp
   position: relative; overflow: hidden; cursor: crosshair; display: flex; align-items: center; 
   justify-content: center; touch-action: none; text-align: center;
   box-shadow: inset 0 2px 5px rgba(0,0,0,0.1);
-  
-  /* NEU: Das Oscilloscope Grid */
   background-image: 
     linear-gradient(#eaeaea 1px, transparent 1px),
     linear-gradient(90deg, #eaeaea 1px, transparent 1px),
@@ -60,6 +65,10 @@ label { font-size: 14px; display: flex; align-items: center; gap: 5px; }
 button { padding: 5px 12px; cursor: pointer; background: #e9e9e9; border: 1px solid #999; border-radius: 3px; font-size: 13px; }
 input[type="number"] { width: 50px; }
 
+#extSyncBtn { font-weight: bold; background-color: #444; color: white; transition: all 0.2s ease; border-radius: 4px;}
+#extSyncBtn.active { background-color: #ff9900; color: #fff; box-shadow: 0 0 8px #ff9900; border-color: #cc7a00; }
+input:disabled { background-color: #eee; color: #999; cursor: not-allowed; }
+
 /* --- PATTERN MACHINE --- */
 #pattern-machine { flex: 0 0 240px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
 .machine-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
@@ -71,13 +80,24 @@ input[type="number"] { width: 50px; }
 .pad.active { background: #666; border: 2px solid #ff4444; }
 .pad.queued { border: 2px solid #ffaa00; animation: fastPulse 0.3s infinite; }
 
-/* --- MOBILE OVERLAY --- */
+/* --- OVERLAYS --- */
 #mobile-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: #ffffff; z-index: 100000; justify-content: center; align-items: center; text-align: center; box-sizing: border-box; padding: 20px; }
 .overlay-content { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; max-width: 450px; }
 .overlay-content img { width: 70px; height: auto; margin-bottom: 25px; animation: tilt 2s infinite ease-in-out; }
 .text-box { background: #f9f9f9; padding: 25px; border-radius: 12px; border: 1px solid #eee; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; }
 .warning { font-family: Arial, sans-serif; font-weight: bold; color: #ff4444; margin: 0 0 15px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
 .instruction { font-family: "Courier New", monospace; font-size: 15px; line-height: 1.6; color: #333; margin: 0; text-align: center; }
+
+/* HELP OVERLAY (Neu und ausklappbar) */
+#help-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.8); z-index: 200000; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box; backdrop-filter: blur(4px); }
+.help-content { background: #fdfdfd; padding: 30px; border-radius: 8px; max-width: 850px; width: 100%; max-height: 85vh; overflow-y: auto; position: relative; box-shadow: 0 10px 40px rgba(0,0,0,0.4); border: 2px solid #ddd; }
+.help-content h2 { margin-top: 0; font-family: "Courier New", monospace; color: #333; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 15px; font-size: 24px; }
+#closeHelpBtn { position: absolute; top: 15px; right: 15px; background: #ff4444; color: white; border: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-weight: bold; font-size: 15px; display: flex; justify-content: center; align-items: center; }
+.help-grid-expanded { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-top: 20px; }
+.help-section { background: #f4f4f4; padding: 15px; border-radius: 6px; border: 1px solid #e0e0e0; }
+.help-section h3 { font-size: 14px; color: #444; border-bottom: 2px solid #ccc; padding-bottom: 5px; margin-top: 0; text-transform: uppercase; }
+.help-section p { font-size: 12px; color: #555; line-height: 1.5; margin-bottom: 8px; margin-top: 0; }
+.help-section p strong { color: #111; }
 
 /* --- LEGAL FOOTER --- */
 .legal-footer { margin-top: 30px; padding-bottom: 10px; text-align: center; font-size: 11px; color: #999; font-family: "Courier New", monospace; clear: both; }
@@ -98,202 +118,79 @@ input[type="number"] { width: 50px; }
 @keyframes fastPulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 
 /* =========================================
-   DOM ERASER (STABLE & VISIBLE WITH CROSSHAIR)
+   DOM ERASER
    ========================================= */
-
 #custom-eraser {
-  position: fixed;
-  pointer-events: none; /* Klicks gehen durch das Bild hindurch */
-  z-index: 9999999;
-  width: 32px; 
-  height: 32px;
+  position: fixed; pointer-events: none; z-index: 9999999; width: 32px; height: 32px;
   background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"><path d="M13.5 3L21 10.5L14.5 17L7 9.5L13.5 3Z" fill="%23f2f2f2" stroke="black" stroke-width="1.5"/><path d="M7 9.5L14.5 17L9 22L1.5 14.5L7 9.5Z" fill="%23ff7eb3" stroke="black" stroke-width="1.5"/></svg>');
-  background-size: contain;
-  background-repeat: no-repeat;
-  display: none; 
-  /* Verschiebt die Spitze des Radierers exakt ins Fadenkreuz! */
-  transform: translate(-5px, -27px);
+  background-size: contain; background-repeat: no-repeat; display: none; transform: translate(-5px, -27px);
 }
-
-body.eraser-mode #custom-eraser {
-  display: block; 
-}
+body.eraser-mode #custom-eraser { display: block; }
 
 /* =========================================
    COLOR SYSTEM (T1 - T4)
    ========================================= */
-   :root {
-    --color-t1: #FF3366; /* Neon Pink/Rot */
-    --color-t2: #33CCFF; /* Cyan */
-    --color-t3: #FFCC00; /* Gelb */
-    --color-t4: #33FF66; /* Giftgrün */
-  }
-  
-  /* Farbbalken in den Tracks */
-  .track-color-strip { width: 6px; height: 80px; border-radius: 3px; margin: 0 4px; opacity: 0.8; }
-  .t1-color { background-color: var(--color-t1); }
-  .t2-color { background-color: var(--color-t2); }
-  .t3-color { background-color: var(--color-t3); }
-  .t4-color { background-color: var(--color-t4); }
-  
-  /* Hintergrund-Klassen für Buttons & Matrix */
-  .t1-bg { background-color: var(--color-t1) !important; color: #000; }
-  .t2-bg { background-color: var(--color-t2) !important; color: #000; }
-  .t3-bg { background-color: var(--color-t3) !important; color: #000; }
-  .t4-bg { background-color: var(--color-t4) !important; color: #000; }
-  
-  /* Die Picker-Buttons dimmen, wenn inaktiv */
-  .picker-btn:not(.active) { opacity: 0.3; background: #999 !important; color: #fff; border-color: #666; }
-  
+:root {
+  --color-t1: #FF3366; 
+  --color-t2: #33CCFF; 
+  --color-t3: #FFCC00; 
+  --color-t4: #33FF66; 
+}
+
+.track-color-strip { width: 6px; height: 80px; border-radius: 3px; margin: 0 4px; opacity: 0.8; }
+.t1-color { background-color: var(--color-t1); }
+.t2-color { background-color: var(--color-t2); }
+.t3-color { background-color: var(--color-t3); }
+.t4-color { background-color: var(--color-t4); }
+
+.t1-bg { background-color: var(--color-t1) !important; color: #000; }
+.t2-bg { background-color: var(--color-t2) !important; color: #000; }
+.t3-bg { background-color: var(--color-t3) !important; color: #000; }
+.t4-bg { background-color: var(--color-t4) !important; color: #000; }
+
+.picker-btn:not(.active) { opacity: 0.3; background: #999 !important; color: #fff; border-color: #666; }
   
 /* =========================================
-   FX RACK (CLEAN FLAT DESIGN)
+   FX RACK
    ========================================= */
-   #trace-module { align-items: stretch; }
+#trace-module { align-items: stretch; }
 
-   #fx-rack {
-     display: flex;
-     gap: 12px;
-     flex: 1;
-     margin-left: 15px;
-   }
-   
-   .fx-col {
-     display: flex;
-     flex-direction: column;
-     justify-content: space-between;
-     /* Das Pad hat 150px + 2px Border = 152px Gesamthöhe */
-     height: 152px; 
-   }
-   
-   /* Vibrato Spalte nach unten drücken */
-   .fx-bottom { justify-content: flex-end; }
-   
-   .fx-unit {
-     background: #fff; 
-     border: 1px solid #ddd; 
-     border-radius: 6px;
-     padding: 6px 8px; /* Kompakter für die Höhe */
-     box-shadow: 0 2px 5px rgba(0,0,0,0.03);
-     display: flex;
-     flex-direction: column;
-     width: 150px;
-     box-sizing: border-box; /* WICHTIG: Verhindert, dass das Padding das Modul sprengt */
-     height: 72px; /* Exakt die halbe Höhe (minus Abstand) */
-   }
-   
-   /* Header & LED */
-   .fx-header {
-     font-family: inherit;
-     font-size: 9px;
-     font-weight: 600;
-     color: #555; 
-     letter-spacing: 0.5px;
-     display: flex;
-     justify-content: space-between;
-     align-items: center;
-     border-bottom: 1px solid #eee; 
-     padding-bottom: 4px; 
-     margin-bottom: 5px; 
-   }
-   
-   .led {
-     width: 6px; height: 6px;
-     border-radius: 50%;
-     background: #eee; 
-     border: none;
-   }
-   .led.on {
-     background: #33ff33; 
-     box-shadow: 0 0 5px rgba(51, 255, 51, 0.6);
-   }
-   
-   /* Body: Matrix, Link & Knobs */
-   .fx-body { display: flex; align-items: center; justify-content: space-between; }
-   
-   /* 2x2 Matrix Grid */
-   .fx-matrix {
-     display: grid;
-     grid-template-columns: 1fr 1fr;
-     gap: 2px;
-     width: 24px;
-     height: 24px;
-     background: #f9f9f9; 
-     padding: 2px;
-     border-radius: 4px;
-     border: 1px solid #eee;
-     box-sizing: border-box;
-   }
-   
-   .matrix-btn {
-     border-radius: 2px;
-     cursor: pointer;
-     opacity: 0.2; 
-     transition: all 0.1s;
-   }
-   .matrix-btn.active { opacity: 1; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
-   
-   /* Der große X/Y Link Button */
-   .fx-xy-link {
-     width: 20px;
-     height: 26px; 
-     background: #f0f0f0;
-     border: 1px solid #ccc;
-     border-radius: 4px;
-     cursor: pointer;
-     transition: all 0.1s;
-     position: relative;
-   }
-   .fx-xy-link::after {
-       content: "X/Y";
-       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-       font-size: 7px; color: #999; font-weight: bold;
-   }
-   .fx-xy-link:hover { background: #e9e9e9; }
-   .fx-xy-link.active {
-     background: #fff;
-     border-color: #aaa;
-     box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
-   }
-   .fx-xy-link.active::after { color: #555; }
-   
-   /* Flache Drehregler (Potis) */
-   .fx-knobs { display: flex; gap: 8px; }
-   
-   .knob-group {
-     display: flex;
-     flex-direction: column;
-     align-items: center;
-     gap: 3px;
-   }
-   
-   .knob {
-     width: 20px; 
-     height: 20px;
-     border-radius: 50%;
-     background: #fff; 
-     border: 2px solid #ddd; 
-     position: relative;
-     cursor: ns-resize;
-     box-shadow: 0 1px 2px rgba(0,0,0,0.05); 
-   }
-   
-   /* Die Markierung auf dem Poti */
-   .knob .tick {
-     position: absolute;
-     top: 2px;
-     left: 9px; 
-     width: 2px;
-     height: 6px;
-     background: #666;
-     border-radius: 1px;
-   }
-   
-   .knob-group span {
-     font-family: inherit;
-     font-size: 8px;
-     font-weight: 600;
-     color: #777;
-     text-transform: uppercase;
-     letter-spacing: 0.5px;
-   }
+#fx-rack {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; flex: 1; margin-left: 15px; height: 154px; 
+}
+
+.fx-unit {
+  background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 6px 8px; 
+  box-shadow: 0 2px 5px rgba(0,0,0,0.03); display: flex; flex-direction: column; box-sizing: border-box; height: 71px; 
+}
+
+.fx-header {
+  font-family: inherit; font-size: 9px; font-weight: 600; color: #555; letter-spacing: 0.5px;
+  display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 4px; margin-bottom: 5px; 
+}
+
+.led { width: 6px; height: 6px; border-radius: 50%; background: #eee; border: none; }
+.led.on { background: #33ff33; box-shadow: 0 0 5px rgba(51, 255, 51, 0.6); }
+
+.fx-body { display: flex; align-items: center; justify-content: space-between; }
+
+.fx-matrix {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 24px; height: 24px; background: #f9f9f9; padding: 2px; border-radius: 4px; border: 1px solid #eee; box-sizing: border-box;
+}
+
+.matrix-btn { border-radius: 2px; cursor: pointer; opacity: 0.2; transition: all 0.1s; }
+.matrix-btn.active { opacity: 1; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+
+.fx-xy-link {
+  width: 20px; height: 26px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; transition: all 0.1s; position: relative;
+}
+.fx-xy-link::after { content: "X/Y"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 7px; color: #999; font-weight: bold; }
+.fx-xy-link:hover { background: #e9e9e9; }
+.fx-xy-link.active { background: #fff; border-color: #aaa; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
+.fx-xy-link.active::after { color: #555; }
+
+.fx-knobs { display: flex; gap: 8px; }
+.knob-group { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.knob { width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 2px solid #ddd; position: relative; cursor: ns-resize; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.knob .tick { position: absolute; top: 2px; left: 9px; width: 2px; height: 6px; background: #666; border-radius: 1px; }
+.knob-group span { font-family: inherit; font-size: 8px; font-weight: 600; color: #777; text-transform: uppercase; letter-spacing: 0.5px; }

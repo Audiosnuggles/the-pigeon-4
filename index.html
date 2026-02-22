@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>The Pigeon</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <link rel="stylesheet" href="style.css?v=46">
+  <link rel="stylesheet" href="style.css?v=58">
 </head>
 <body>
 
@@ -22,6 +22,47 @@
     </div>
   </div>
 
+  <div id="help-overlay">
+    <div class="help-content">
+      <button id="closeHelpBtn">X</button>
+      <h2>The Pigeon - User Manual</h2>
+      <div class="help-grid-expanded">
+        
+        <div class="help-section">
+          <h3>1. Tracks & Drawing</h3>
+          <p><strong>Oscillators (∿ ⎍ ◺):</strong> Choose the waveform for the track. <strong>∿ (Sine)</strong> for smooth bass/leads, <strong>⎍ (Square)</strong> for hollow 8-bit sounds, or <strong>◺ (Sawtooth)</strong> for sharp, buzzing synths.</p>
+          <p><strong>Track Controls:</strong> The <strong>Color Strip</strong> indicates the track (T1-T4). Use <strong>Mute</strong> to silence a track, and the <strong>Volume Slider</strong> below it to adjust its level.</p>
+          <p><strong>Snap:</strong> Check 'Snap' to quantize your drawing. The track is divided into steps, snapping your notes precisely to a rhythmic grid.</p>
+          <p><strong>Drawing:</strong> Left-click and drag on the canvas. High up = high pitch, lower down = low pitch.</p>
+        </div>
+
+        <div class="help-section">
+          <h3>2. Performance & FX Rack</h3>
+          <p><strong>Performance (T1-T4):</strong> Select the track you want to control live. Use <strong>Clear Track</strong> to quickly erase all drawings on it.</p>
+          <p><strong>Poke Me Pad:</strong> A live trigger! Click and hold inside the square. X-axis = timeline position, Y-axis = pitch/frequency.</p>
+          <p><strong>FX Matrix:</strong> 6 effect modules. Click the 4 colored squares (representing T1-T4) to route a track into an effect. The green LED shows if the effect is active.</p>
+          <p><strong>X/Y Link:</strong> Turn this ON to hijack the 'Poke Me' pad. Drawing stops, and the Pad now controls the two effect knobs live (X-Axis = Left Knob, Y-Axis = Right Knob).</p>
+        </div>
+
+        <div class="help-section">
+          <h3>3. Global Controls & Tools</h3>
+          <p><strong>Sync & Tempo:</strong> Use <strong>EXT SYNC</strong> to lock The Pigeon to an external MIDI Clock (e.g., Ableton). Or set the <strong>BPM</strong> manually.</p>
+          <p><strong>Loop & Harmonize:</strong> Check <strong>Loop</strong> for infinite playback. <strong>Harmonize</strong> forces your drawn frequencies into a perfect musical <strong>Scale</strong> (Major, Minor, Pentatonic).</p>
+          <p><strong>Tool & Brush:</strong> Switch between <strong>Draw</strong> and <strong>Eraser</strong>. The <strong>Brush</strong> dropdown offers wild textures (Standard, Particles, Fractal, or Chords). Adjust the stroke with the <strong>Size</strong> slider.</p>
+        </div>
+
+        <div class="help-section">
+          <h3>4. Actions & Pattern Bank</h3>
+          <p><strong>Playback Buttons:</strong> <strong>Play/Stop</strong> starts the loop (Shortcut: <em>Spacebar</em>). <strong>Clear</strong> wipes all tracks. <strong>Undo</strong> reverts your last drawing (Shortcut: <em>Ctrl/Cmd + Z</em>).</p>
+          <p><strong>Data & Export:</strong> Use <strong>Export/Import Set</strong> to save your entire session as a file. <strong>Export WAV</strong> renders a perfect offline-loop to your hard drive.</p>
+          <p><strong>⏺ Rec:</strong> Click to start live recording. Perform on the Trace Pad! Click 'Stop Rec' to download the live jam as a WAV file.</p>
+          <p><strong>Pattern Bank:</strong> Save different loops into Banks A, B, C. Click <strong>⏺ SAVE</strong> (it pulses), then click a Pad to store. Click any Pad during playback to queue and switch patterns seamlessly.</p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <div id="main">
     <img id="pigeon" src="pigeon.svg" alt="Pigeon">
     
@@ -30,9 +71,9 @@
     <div id="tracks">
       <div class="track-container">
         <div class="wave-buttons">
-          <button class="wave-btn" data-wave="sine">∿</button>
-          <button class="wave-btn" data-wave="square">□</button>
-          <button class="wave-btn" data-wave="sawtooth">Z</button>
+          <button class="wave-btn active" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">⎍</button>
+          <button class="wave-btn" data-wave="sawtooth">◺</button>
         </div>
         <div class="track-color-strip t1-color"></div>
         <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
@@ -46,9 +87,9 @@
 
       <div class="track-container">
         <div class="wave-buttons">
-          <button class="wave-btn" data-wave="sine">∿</button>
-          <button class="wave-btn" data-wave="square">□</button>
-          <button class="wave-btn" data-wave="sawtooth">Z</button>
+          <button class="wave-btn active" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">⎍</button>
+          <button class="wave-btn" data-wave="sawtooth">◺</button>
         </div>
         <div class="track-color-strip t2-color"></div>
         <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
@@ -62,9 +103,9 @@
 
       <div class="track-container">
         <div class="wave-buttons">
-          <button class="wave-btn" data-wave="sine">∿</button>
-          <button class="wave-btn" data-wave="square">□</button>
-          <button class="wave-btn" data-wave="sawtooth">Z</button>
+          <button class="wave-btn active" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">⎍</button>
+          <button class="wave-btn" data-wave="sawtooth">◺</button>
         </div>
         <div class="track-color-strip t3-color"></div>
         <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
@@ -78,9 +119,9 @@
 
       <div class="track-container">
         <div class="wave-buttons">
-          <button class="wave-btn" data-wave="sine">∿</button>
-          <button class="wave-btn" data-wave="square">□</button>
-          <button class="wave-btn" data-wave="sawtooth">Z</button>
+          <button class="wave-btn active" data-wave="sine">∿</button>
+          <button class="wave-btn" data-wave="square">⎍</button>
+          <button class="wave-btn" data-wave="sawtooth">◺</button>
         </div>
         <div class="track-color-strip t4-color"></div>
         <div class="legend">1k<br><br>500<br><br>250<br><br>80</div>
@@ -110,58 +151,92 @@
       </div>
 
       <div id="fx-rack">
-        <div class="fx-col">
-          
-          <div class="fx-unit">
-            <div class="fx-header">TAPE DELAY <div class="led on"></div></div>
-            <div class="fx-body">
-              <div class="fx-matrix">
-                <div class="matrix-btn t1-bg active"></div>
-                <div class="matrix-btn t2-bg"></div>
-                <div class="matrix-btn t3-bg active"></div>
-                <div class="matrix-btn t4-bg"></div>
-              </div>
-              <button class="fx-xy-link"></button>
-              <div class="fx-knobs">
-                <div class="knob-group"><div class="knob" style="transform: rotate(45deg);"><div class="tick"></div></div><span>TIME</span></div>
-                <div class="knob-group"><div class="knob" style="transform: rotate(120deg);"><div class="tick"></div></div><span>FDBK</span></div>
-              </div>
+        <div class="fx-unit" id="fx-delay">
+          <div class="fx-header">DELAY <div class="led on"></div></div>
+          <div class="fx-body">
+            <div class="fx-matrix">
+              <div class="matrix-btn t1-bg active"></div><div class="matrix-btn t2-bg"></div>
+              <div class="matrix-btn t3-bg active"></div><div class="matrix-btn t4-bg"></div>
+            </div>
+            <button class="fx-xy-link"></button>
+            <div class="fx-knobs">
+              <div class="knob-group"><div class="knob" data-val="0.4"><div class="tick"></div></div><span>TIME</span></div>
+              <div class="knob-group"><div class="knob" data-val="0.3"><div class="tick"></div></div><span>FDBK</span></div>
             </div>
           </div>
-
-          <div class="fx-unit">
-            <div class="fx-header">SPRING REVERB <div class="led"></div></div>
-            <div class="fx-body">
-              <div class="fx-matrix">
-                <div class="matrix-btn t1-bg"></div>
-                <div class="matrix-btn t2-bg active"></div>
-                <div class="matrix-btn t3-bg"></div>
-                <div class="matrix-btn t4-bg"></div>
-              </div>
-              <button class="fx-xy-link"></button>
-              <div class="fx-knobs">
-                <div class="knob-group"><div class="knob" style="transform: rotate(-30deg);"><div class="tick"></div></div><span>DECAY</span></div>
-                <div class="knob-group"><div class="knob" style="transform: rotate(80deg);"><div class="tick"></div></div><span>MIX</span></div>
-              </div>
-            </div>
-          </div>
-
         </div>
 
-        <div class="fx-col fx-bottom">
-          <div class="fx-unit">
-            <div class="fx-header">VIBRATO <div class="led"></div></div>
-            <div class="fx-body">
-              <div class="fx-matrix">
-                <div class="matrix-btn t1-bg active"></div>
-                <div class="matrix-btn t2-bg active"></div>
-                <div class="matrix-btn t3-bg active"></div>
-                <div class="matrix-btn t4-bg active"></div>
-              </div>
-              <button class="fx-xy-link active"></button> <div class="fx-knobs">
-                <div class="knob-group"><div class="knob" style="transform: rotate(-100deg);"><div class="tick"></div></div><span>RATE</span></div>
-                <div class="knob-group"><div class="knob" style="transform: rotate(20deg);"><div class="tick"></div></div><span>DEPTH</span></div>
-              </div>
+        <div class="fx-unit" id="fx-reverb">
+          <div class="fx-header">REVERB <div class="led"></div></div>
+          <div class="fx-body">
+            <div class="fx-matrix">
+              <div class="matrix-btn t1-bg"></div><div class="matrix-btn t2-bg active"></div>
+              <div class="matrix-btn t3-bg"></div><div class="matrix-btn t4-bg"></div>
+            </div>
+            <button class="fx-xy-link"></button>
+            <div class="fx-knobs">
+              <div class="knob-group"><div class="knob" data-val="0.5"><div class="tick"></div></div><span>DECAY</span></div>
+              <div class="knob-group"><div class="knob" data-val="0.2"><div class="tick"></div></div><span>MIX</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fx-unit" id="fx-vibrato">
+          <div class="fx-header">VIBRATO <div class="led"></div></div>
+          <div class="fx-body">
+            <div class="fx-matrix">
+              <div class="matrix-btn t1-bg active"></div><div class="matrix-btn t2-bg active"></div>
+              <div class="matrix-btn t3-bg active"></div><div class="matrix-btn t4-bg active"></div>
+            </div>
+            <button class="fx-xy-link active"></button>
+            <div class="fx-knobs">
+              <div class="knob-group"><div class="knob" data-val="0.25"><div class="tick"></div></div><span>RATE</span></div>
+              <div class="knob-group"><div class="knob" data-val="0.0"><div class="tick"></div></div><span>DEPTH</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fx-unit" id="fx-filter">
+          <div class="fx-header">FILTER <div class="led"></div></div>
+          <div class="fx-body">
+            <div class="fx-matrix">
+              <div class="matrix-btn t1-bg"></div><div class="matrix-btn t2-bg"></div>
+              <div class="matrix-btn t3-bg"></div><div class="matrix-btn t4-bg"></div>
+            </div>
+            <button class="fx-xy-link"></button>
+            <div class="fx-knobs">
+              <div class="knob-group"><div class="knob" data-val="1.0"><div class="tick"></div></div><span>FREQ</span></div>
+              <div class="knob-group"><div class="knob" data-val="0.0"><div class="tick"></div></div><span>RES</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fx-unit" id="fx-stutter">
+          <div class="fx-header">STUTTER <div class="led"></div></div>
+          <div class="fx-body">
+            <div class="fx-matrix">
+              <div class="matrix-btn t1-bg"></div><div class="matrix-btn t2-bg"></div>
+              <div class="matrix-btn t3-bg"></div><div class="matrix-btn t4-bg"></div>
+            </div>
+            <button class="fx-xy-link"></button>
+            <div class="fx-knobs">
+              <div class="knob-group"><div class="knob" data-val="0.5"><div class="tick"></div></div><span>RATE</span></div>
+              <div class="knob-group"><div class="knob" data-val="0.0"><div class="tick"></div></div><span>MIX</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fx-unit" id="fx-fractal">
+          <div class="fx-header">FRACTAL BRUSH <div class="led" style="visibility:hidden;"></div></div>
+          <div class="fx-body">
+            <div class="fx-matrix" style="visibility:hidden;">
+              <div class="matrix-btn t1-bg"></div><div class="matrix-btn t2-bg"></div>
+              <div class="matrix-btn t3-bg"></div><div class="matrix-btn t4-bg"></div>
+            </div>
+            <button class="fx-xy-link"></button>
+            <div class="fx-knobs">
+              <div class="knob-group"><div class="knob" data-val="0.5"><div class="tick"></div></div><span>CHAOS</span></div>
+              <div class="knob-group"><div class="knob" data-val="0.0"><div class="tick"></div></div><span>MORPH</span></div>
             </div>
           </div>
         </div>
@@ -172,6 +247,7 @@
     <div id="controls">
       <div class="controls-left">
         <div class="control-row">
+          <button id="extSyncBtn">EXT SYNC</button>
           <label>Tempo: <input type="number" id="bpmInput" value="120" min="30" max="300"></label>
           <label>Loop: <input type="checkbox" id="loopCheckbox" checked></label>
           <label>Harmonize: <input type="checkbox" id="harmonizeCheckbox"></label>
@@ -210,7 +286,8 @@
           <button id="exportWavButton">Export WAV</button>
           <button id="recButton">⏺ Rec</button>
           <button id="fullscreenBtn">🖥 Fullscreen</button>
-          <input type="file" id="importFileInput" style="display:none;">
+          <button id="helpBtn">❓ Help</button>
+          <input type="file" id="importFileInput" style="display:none;" accept=".json">
         </div>
       </div>
 
@@ -244,7 +321,12 @@
     </div>
 
     <footer class="legal-footer">
-      <a href="impressum.html">Impressum</a> | <a href="datenschutz.html">Privacy Policy</a>
+      <div style="margin-bottom: 6px; font-weight: 600; color: #666; font-size: 12px;">
+        &copy; 2026 thehumants.com
+      </div>
+      <div>
+        <a href="impressum.html">Impressum</a> | <a href="datenschutz.html">Privacy Policy</a>
+      </div>
     </footer>
 
   </div> 

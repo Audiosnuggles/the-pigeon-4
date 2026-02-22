@@ -37,6 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupPads();
     setupTracePad();
     resetFXUI(updateRoutingFromUI);
+    colorizeTitle();
     document.body.classList.toggle("eraser-mode", toolSelect.value === "erase");
 });
 
@@ -500,7 +501,18 @@ function erase(t, x, y) {
 }
 
 function setupMainControls() {
+    // --- HELP OVERLAY LOGIK ---
+    const helpBtn = document.getElementById("helpBtn");
+    const helpOverlay = document.getElementById("help-overlay");
+    const closeHelpBtn = document.getElementById("closeHelpBtn");
     
+    if (helpBtn && helpOverlay && closeHelpBtn) {
+        helpBtn.addEventListener("click", () => helpOverlay.style.display = "flex");
+        closeHelpBtn.addEventListener("click", () => helpOverlay.style.display = "none");
+        helpOverlay.addEventListener("click", (e) => { if(e.target === helpOverlay) helpOverlay.style.display = "none"; });
+    }
+    // --------------------------
+
     let extSyncActive = false;
     let midiAccess = null;
     let clockCount = 0;
@@ -1066,4 +1078,14 @@ function setupTrackControls(t) {
     
     const snapBox = cont.querySelector(".snap-checkbox");
     if(snapBox) snapBox.addEventListener("change", e => t.snap = e.target.checked);
+}
+
+// Helfer-Funktion für die Titel-Farben
+function colorizeTitle() {
+    const h1 = document.querySelector('h1');
+    if (!h1) return;
+    // Zerlegt den Text in Buchstaben und packt jeden (außer Leerzeichen) in ein <span>
+    h1.innerHTML = h1.textContent.split('').map(char => 
+        char.trim() ? `<span>${char}</span>` : char
+    ).join('');
 }
